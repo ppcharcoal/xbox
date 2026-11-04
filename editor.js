@@ -183,6 +183,10 @@ function render() {
   $('#sens-value').textContent = `${p.sensitivity.toFixed(1)}×`;
   $('#invert').checked = p.invertY;
   $('#smooth').checked = p.smoothing !== false;
+  $('#accel').value = p.acceleration ?? 0.5;
+  $('#accel-value').textContent = (p.acceleration ?? 0.5).toFixed(1);
+  $('#dz').value = p.deadzone ?? 0.2;
+  $('#dz-value').textContent = `${Math.round((p.deadzone ?? 0.2) * 100)}%`;
 
   renderSide($('#left'), LAYOUT.left);
   renderSide($('#right'), LAYOUT.right);
@@ -303,6 +307,16 @@ $('#sens').addEventListener('input', (e) => {
   $('#sens-value').textContent = `${profile().sensitivity.toFixed(1)}×`;
   save();
 });
+$('#accel').addEventListener('input', (e) => {
+  profile().acceleration = Number(e.target.value);
+  $('#accel-value').textContent = profile().acceleration.toFixed(1);
+  save();
+});
+$('#dz').addEventListener('input', (e) => {
+  profile().deadzone = Number(e.target.value);
+  $('#dz-value').textContent = `${Math.round(profile().deadzone * 100)}%`;
+  save();
+});
 $('#smooth').addEventListener('change', (e) => {
   profile().smoothing = e.target.checked;
   save(e.target.checked ? 'Wygładzanie ruchu myszy włączone.' : 'Wygładzanie ruchu myszy wyłączone.');
@@ -351,7 +365,10 @@ function confirmName() {
     save(`Zmieniono nazwę na: ${name}.`);
   } else {
     const base = nameMode === 'duplicate' ? profile() : { sensitivity: 1, invertY: false, smoothing: true, mapping: defaultMapping };
-    data.profiles.push({ name, sensitivity: base.sensitivity, invertY: base.invertY, smoothing: base.smoothing !== false, mapping: { ...base.mapping } });
+    data.profiles.push({
+      name, sensitivity: base.sensitivity, invertY: base.invertY, smoothing: base.smoothing !== false,
+      deadzone: base.deadzone ?? 0.2, acceleration: base.acceleration ?? 0.5, mapping: { ...base.mapping },
+    });
     data.active = name;
     save(`Utworzono profil: ${name}.`);
   }
@@ -404,6 +421,8 @@ twoStep($('#reset'), 'Na pewno przywrócić?', () => {
   p.sensitivity = 1;
   p.invertY = false;
   p.smoothing = true;
+  p.deadzone = 0.2;
+  p.acceleration = 0.5;
   save(`Przywrócono domyślne sterowanie w profilu: ${p.name}.`);
   render();
 });

@@ -82,6 +82,9 @@ otwiera edytor:
 - **kilka klawiszy na jeden przycisk**: kliknij **+** przy przycisku i dodaj kolejny klawisz,
 - **jeden klawisz na kilka przycisków naraz** (np. LB+RB): przypisz ten sam klawisz do kolejnego
   przycisku; na klawiszu pojawi się znacznik **+1**,
+- **akceleracja** (szybszy ruch ręki obraca kamerę ponad proporcję; 0 = wyłączona),
+- **martwa strefa gry**: każdy ruch myszy zaczyna od tej wartości, żeby małe ruchy nie ginęły
+  w martwej strefie gałki w grze (0 = zwykła gałka; domyślnie 20%),
 - suwak **czułość myszy**, **wygładzanie** (kamera płynnie podąża za ręką jak kursor na
   komputerze, zamiast skakać jak gałka; domyślnie włączone) i **odwróć oś Y**,
 - **profile**, np. osobny dla każdej gry: *Nowy profil*, *Duplikuj*, *Zmień nazwę*, *Usuń*,

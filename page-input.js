@@ -19,6 +19,8 @@
   var SENS = typeof CFG.mouseSensitivity === 'number' ? CFG.mouseSensitivity : 1;
   var INVERT_Y = !!CFG.invertY;
   var SMOOTH = CFG.smoothing !== false;
+  var DZ = typeof CFG.deadzone === 'number' ? CFG.deadzone : 0.2;
+  var ACCEL = typeof CFG.acceleration === 'number' ? CFG.acceleration : 0.5;
   var PROFILE = CFG.profileName || '';
   var MAPPER_ENABLED = CFG.mapper !== false;
   var TOGGLE_KEY = CFG.mapperToggleKey || 'F8';
@@ -327,65 +329,75 @@
     wheelTimers[code] = setTimeout(function () { wheelTimers[code] = 0; press(code, false); }, WHEEL_PRESS_MS);
   }, { capture: true, passive: false });
 
-  var DEADZONE_COUNTERWEIGHT = 0.2; // small mouse moves still beat the game's stick deadzone
-
+  // Mouse -> right stick.
+  //  - deadzone compensation (DZ): any movement starts at DZ, so small moves get past the
+  //    game's own stick deadzone instead of doing nothing (0 = plain linear stick)
+  //  - acceleration (ACCEL): faster hand movement turns the camera more than proportionally
   function shapeStick(x, y) {
     var mag = Math.sqrt(x * x + y * y);
-    if (!mag) return [0, 0];
-    var shaped = Math.min(1, DEADZONE_COUNTERWEIGHT + mag * (1 - DEADZONE_COUNTERWEIGHT));
+    if (mag < 0.002) return [0, 0];
+    var accel = mag * (1 + ACCEL * mag);
+    var shaped = Math.min(1, DZ + accel * (1 - DZ));
     return [x / mag * shaped, y / mag * shaped];
   }
 
-  // Smoothing: instead of jumping the stick on every mouse event, measure how fast the
-  // mouse moves (pixels per ms, every 8 ms) and glide the stick towards that, so the
-  // camera follows the hand like a desktop cursor rather than in steps.
-  var smooth = { dx: 0, dy: 0, x: 0, y: 0, last: 0, lastMove: 0, timer: 0 };
-  var SMOOTH_TICK = 8;      // ms
-  var SMOOTH_TAU = 18;      // ms, how quickly the stick follows
+  // Smoothing: mouse speed is measured over the last few events (not per 8 ms tick, which
+  // reads 0 between the sparse events of a slow hand and made small moves stall), eased
+  // with a short time constant, and only then shaped, so slow moves stay above the
+  // deadzone compensation the whole time.
+  var smooth = { events: [], vx: 0, vy: 0, last: 0, lastMove: 0, timer: 0 };
+  var SMOOTH_TICK = 4;      // ms
+  var SMOOTH_WINDOW = 40;   // ms of mouse history used to measure speed
+  var SMOOTH_TAU = 10;      // ms, how quickly the stick follows
   var SMOOTH_GAIN = 0.35;   // stick per (px/ms) at sensitivity 1
   function smoothTick() {
     var now = performance.now();
     var dt = Math.max(1, now - smooth.last);
     smooth.last = now;
-    var t = shapeStick(smooth.dx / dt * SMOOTH_GAIN * SENS, smooth.dy / dt * SMOOTH_GAIN * SENS);
-    smooth.dx = smooth.dy = 0;
+    var ev = smooth.events;
+    while (ev.length && now - ev[0].t > SMOOTH_WINDOW) ev.shift();
+    var sx = 0, sy = 0;
+    for (var i = 0; i < ev.length; i++) { sx += ev[i].x; sy += ev[i].y; }
+    // span: from the oldest event still in the window, at least one tick
+    var span = ev.length ? Math.min(SMOOTH_WINDOW, Math.max(SMOOTH_TICK, now - ev[0].t + SMOOTH_TICK)) : SMOOTH_WINDOW;
     var a = 1 - Math.exp(-dt / SMOOTH_TAU);
-    smooth.x += (t[0] - smooth.x) * a;
-    smooth.y += (t[1] - smooth.y) * a;
-    if (now - smooth.lastMove > 120 && Math.abs(smooth.x) < 0.02 && Math.abs(smooth.y) < 0.02) {
-      smooth.x = smooth.y = 0;
+    smooth.vx += (sx / span - smooth.vx) * a;
+    smooth.vy += (sy / span - smooth.vy) * a;
+    if (!ev.length && now - smooth.lastMove > 80 && Math.abs(smooth.vx) + Math.abs(smooth.vy) < 0.004) {
+      smooth.vx = smooth.vy = 0;
       clearInterval(smooth.timer);
       smooth.timer = 0;
     }
-    mapper.mouseX = smooth.x;
-    mapper.mouseY = smooth.y;
+    var out = shapeStick(smooth.vx * SMOOTH_GAIN * SENS, smooth.vy * SMOOTH_GAIN * SENS);
+    mapper.mouseX = out[0];
+    mapper.mouseY = out[1];
     touch();
   }
   function resetSmooth() {
     clearInterval(smooth.timer);
     smooth.timer = 0;
-    smooth.dx = smooth.dy = smooth.x = smooth.y = 0;
+    smooth.events = [];
+    smooth.vx = smooth.vy = 0;
   }
 
   window.addEventListener('mousemove', function (e) {
     if (!mapper.on || !document.pointerLockElement) return;
+    var dy = e.movementY * (INVERT_Y ? -1 : 1);
     if (SMOOTH) {
-      smooth.dx += e.movementX;
-      smooth.dy += e.movementY * (INVERT_Y ? -1 : 1);
-      smooth.lastMove = performance.now();
+      var now = performance.now();
+      smooth.events.push({ t: now, x: e.movementX, y: dy });
+      smooth.lastMove = now;
       if (!smooth.timer) {
-        smooth.last = performance.now() - SMOOTH_TICK;
+        smooth.last = now - SMOOTH_TICK;
         smooth.timer = setInterval(smoothTick, SMOOTH_TICK);
       }
       return;
     }
     var k = 0.045 * SENS;
-    var x = e.movementX * k, y = e.movementY * k * (INVERT_Y ? -1 : 1);
-    var mag = Math.sqrt(x * x + y * y);
-    if (mag > 0) {
-      var shaped = Math.min(1, DEADZONE_COUNTERWEIGHT + mag * (1 - DEADZONE_COUNTERWEIGHT));
-      mapper.mouseX = x / mag * shaped;
-      mapper.mouseY = y / mag * shaped;
+    var out = shapeStick(e.movementX * k, dy * k);
+    if (out[0] || out[1]) {
+      mapper.mouseX = out[0];
+      mapper.mouseY = out[1];
       touch();
     }
     clearTimeout(mapper.mouseTimer);
@@ -410,6 +422,8 @@
     SENS = p && typeof p.mouseSensitivity === 'number' ? p.mouseSensitivity : 1;
     INVERT_Y = !!(p && p.invertY);
     SMOOTH = !(p && p.smoothing === false);
+    DZ = p && typeof p.deadzone === 'number' ? p.deadzone : 0.2;
+    ACCEL = p && typeof p.acceleration === 'number' ? p.acceleration : 0.5;
     resetSmooth();
     PROFILE = (p && p.profileName) || '';
     if (mapper.on) showBadge(true);

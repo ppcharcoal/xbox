@@ -182,6 +182,8 @@ function pageProfile() {
     mouseSensitivity: p.sensitivity,
     invertY: p.invertY,
     smoothing: p.smoothing,
+    deadzone: p.deadzone,
+    acceleration: p.acceleration,
     keyMapping: cfg.mapper ? p.mapping : {},
   };
 }

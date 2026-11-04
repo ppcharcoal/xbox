@@ -173,6 +173,12 @@ function cleanMapping(mapping) {
   return out;
 }
 
+function clampNum(value, lo, hi, fallback) {
+  const n = Number(value);
+  if (value === undefined || value === null || !Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(n * 100) / 100));
+}
+
 function cleanProfile(p) {
   const sens = Number(p && p.sensitivity);
   return {
@@ -180,6 +186,8 @@ function cleanProfile(p) {
     sensitivity: Number.isFinite(sens) ? Math.min(5, Math.max(0.1, Math.round(sens * 100) / 100)) : 1,
     invertY: Boolean(p && p.invertY),
     smoothing: !(p && p.smoothing === false),
+    deadzone: clampNum(p && p.deadzone, 0, 0.5, 0.2),
+    acceleration: clampNum(p && p.acceleration, 0, 3, 0.5),
     mapping: cleanMapping(p && p.mapping),
   };
 }

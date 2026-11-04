@@ -53,8 +53,9 @@
   .btn:hover { background: var(--body); }
   .btn.confirm { border-color: var(--danger); color: var(--danger); }
   .btn.primary { background: var(--cap); color: var(--cap-ink); border-color: var(--cap-edge); font-weight: 700; }
-  .mouse { display: flex; align-items: center; gap: 14px; margin-left: auto; }
-  .mouse input[type=range] { width: 170px; accent-color: var(--cap); }
+  .mouse { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; flex-basis: 100%; }
+  .slider { display: flex; align-items: center; gap: 10px; }
+  .mouse input[type=range] { width: 118px; accent-color: var(--cap); }
   .sens-value { min-width: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .check { display: inline-flex; align-items: center; gap: 6px; }
 
@@ -152,9 +153,21 @@
     </span>
   </div>
   <div class="mouse">
-    <label for="sens">Czułość myszy</label>
-    <input type="range" id="sens" min="0.2" max="4" step="0.1">
-    <span class="sens-value" id="sens-value"></span>
+    <span class="slider">
+      <label for="sens">Czułość myszy</label>
+      <input type="range" id="sens" min="0.2" max="4" step="0.1">
+      <span class="sens-value" id="sens-value"></span>
+    </span>
+    <span class="slider" title="Im szybciej ruszasz myszą, tym bardziej ponad proporcję obraca się kamera. 0 = wyłączona">
+      <label for="accel">Akceleracja</label>
+      <input type="range" id="accel" min="0" max="3" step="0.1">
+      <span class="sens-value" id="accel-value"></span>
+    </span>
+    <span class="slider" title="Każdy ruch zaczyna od tej wartości, żeby małe ruchy przebiły się przez martwą strefę gałki w grze. 0 = zwykła gałka bez kompensacji">
+      <label for="dz">Martwa strefa gry</label>
+      <input type="range" id="dz" min="0" max="0.5" step="0.01">
+      <span class="sens-value" id="dz-value"></span>
+    </span>
     <label class="check" title="Kamera płynnie podąża za ruchem ręki, jak kursor na komputerze"><input type="checkbox" id="smooth"> Wygładzanie</label>
     <label class="check"><input type="checkbox" id="invert"> Odwróć oś Y</label>
   </div>
