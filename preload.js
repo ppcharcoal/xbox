@@ -25,6 +25,8 @@ if (payload && payload.src) {
     ');\n';
 
   webFrame
-    .executeJavaScript(seed + payload.src + '\n;void 0;\n//# sourceURL=better-xcloud.user.js\n')
+    .executeJavaScript(
+      seed + (payload.prelude || '') + payload.src + '\n;void 0;\n//# sourceURL=better-xcloud.user.js\n'
+    )
     .catch((e) => console.error('[xbox-play] Better xCloud failed:', e));
 }

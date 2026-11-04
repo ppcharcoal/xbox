@@ -1,5 +1,8 @@
 'use strict';
 
+// Each watched pad keeps one blocking read open on a libuv worker thread.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '16';
+
 const {
   app,
   BrowserWindow,
@@ -24,6 +27,7 @@ const BUNDLED_BX = path.join(__dirname, 'better-xcloud.user.js');
 const USER_DIR = app.getPath('userData'); // ~/.config/xbox-play
 const CACHED_BX = path.join(USER_DIR, 'better-xcloud.user.js');
 const CONFIG_PATH = path.join(USER_DIR, 'config.json');
+const STATE_PATH = path.join(USER_DIR, 'state.json');
 
 // ---------- config ----------
 
@@ -45,6 +49,24 @@ function loadConfig() {
 }
 
 const cfg = loadConfig();
+
+// Remembers the last console you streamed from (for autoConnect).
+function loadState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+const state = loadState();
+function saveState() {
+  try {
+    fs.mkdirSync(USER_DIR, { recursive: true });
+    fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2) + '\n');
+  } catch (e) {
+    console.warn(`[xbox-play] Cannot save ${STATE_PATH}: ${e.message}`);
+  }
+}
 
 // ---------- Chromium switches (must be set before "ready") ----------
 
@@ -116,7 +138,9 @@ async function updateBetterXcloud() {
 // The preload asks for the script synchronously so it can run before any page script.
 ipcMain.on('bx:get', (event, href) => {
   const ok = cfg.betterXcloud && betterXcloud && lib.isBetterXcloudPage(String(href));
-  event.returnValue = ok ? { src: betterXcloud.src, defaults: cfg.betterXcloudDefaults } : null;
+  event.returnValue = ok
+    ? { src: betterXcloud.src, defaults: cfg.betterXcloudDefaults, prelude: lib.HOME_BUTTON_OVERRIDE_JS }
+    : null;
 });
 
 // ---------- window ----------
@@ -227,8 +251,88 @@ function openGamepadTester() {
   testerWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lib.GAMEPAD_TESTER_HTML));
 }
 
+// ---------- Xbox (guide) button ----------
+// Presses come from F9 and from the pad itself (read from /dev/input, so it works
+// even when the browser does not see the button). They are fed into the page as
+// button 16 of the pad, which Better xCloud turns into the Xbox button on the console.
+
+const MIN_HOLD_MS = 120; // the page polls the pad; very short taps would be missed
+let homeDownAt = 0;
+let homeReleaseTimer = null;
+
+function setXboxButton(pressed) {
+  const wc = mainWindow?.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  clearTimeout(homeReleaseTimer);
+  if (pressed) {
+    homeDownAt = Date.now();
+    wc.executeJavaScript(`window.__xboxPlayHome ? window.__xboxPlayHome(true) : null`)
+      .then((hasPad) => {
+        // No real pad in the page (e.g. keyboard only): tap Xbox directly on the stream.
+        if (hasPad === false) return wc.executeJavaScript(lib.pressXboxButtonScript(0));
+      })
+      .catch(() => {});
+  } else {
+    const wait = Math.max(0, MIN_HOLD_MS - (Date.now() - homeDownAt));
+    homeReleaseTimer = setTimeout(() => {
+      if (!wc.isDestroyed()) {
+        wc.executeJavaScript(`window.__xboxPlayHome && window.__xboxPlayHome(false)`).catch(() => {});
+      }
+    }, wait);
+  }
+}
+
+const guideWatchers = new Map(); // /dev/input/eventN -> stream
+const guideFailed = new Set();
+
+function scanGuideButtons() {
+  let text;
+  try {
+    text = fs.readFileSync('/proc/bus/input/devices', 'utf8');
+  } catch {
+    return;
+  }
+  const present = new Set();
+  for (const dev of lib.findGuideButtonDevices(text)) {
+    const node = `/dev/input/${dev.event}`;
+    present.add(node);
+    if (guideWatchers.has(node) || guideFailed.has(node)) continue;
+    const stream = fs.createReadStream(node, { highWaterMark: lib.INPUT_EVENT_SIZE * 64 });
+    guideWatchers.set(node, stream);
+    let rest = Buffer.alloc(0);
+    stream.on('open', () => console.log(`[xbox-play] Xbox button: watching ${dev.name} (${node})`));
+    stream.on('data', (chunk) => {
+      const parsed = lib.parseInputEvents(rest.length ? Buffer.concat([rest, chunk]) : chunk);
+      rest = parsed.rest;
+      for (const ev of parsed.events) {
+        if (ev.type !== lib.EV_KEY || ev.code !== lib.BTN_MODE || ev.value === 2) continue;
+        if (mainWindow?.isFocused()) setXboxButton(ev.value === 1);
+      }
+    });
+    stream.on('error', (e) => {
+      if (e.code === 'EACCES') console.warn(`[xbox-play] Xbox button: no access to ${node}`);
+      guideFailed.add(node);
+      guideWatchers.delete(node);
+    });
+    stream.on('close', () => guideWatchers.delete(node));
+  }
+  // Forget devices that went away so they are picked up again when they come back.
+  for (const node of guideFailed) if (!present.has(node)) guideFailed.delete(node);
+  for (const [node, stream] of guideWatchers) {
+    if (!present.has(node)) {
+      stream.destroy();
+      guideWatchers.delete(node);
+    }
+  }
+}
+
 function handleShortcuts(win) {
   win.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F9') {
+      event.preventDefault();
+      if (!input.isAutoRepeat) setXboxButton(input.type === 'keyDown');
+      return;
+    }
     if (input.type !== 'keyDown') return;
     const ctrl = input.control || input.meta;
     const key = input.key;
@@ -237,17 +341,14 @@ function handleShortcuts(win) {
     let handled = true;
 
     if (key === 'F11') win.setFullScreen(!win.isFullScreen());
+    else if (ctrl && input.shift && key.toLowerCase() === 'c') wc.loadURL(lib.consolesUrl(state.lastConsole?.locale));
     else if (key === 'F5' || (ctrl && !input.shift && key.toLowerCase() === 'r')) wc.reload();
     else if (ctrl && input.shift && key.toLowerCase() === 'r') wc.reloadIgnoringCache();
     else if (key === 'F12' || (ctrl && input.shift && key.toLowerCase() === 'i')) wc.toggleDevTools();
     else if (ctrl && key.toLowerCase() === 'q') app.quit();
     else if (input.alt && key === 'ArrowLeft' && nav?.canGoBack()) nav.goBack();
     else if (input.alt && key === 'ArrowRight' && nav?.canGoForward()) nav.goForward();
-    else if (key === 'F9') {
-      wc.executeJavaScript(lib.pressXboxButtonScript(0))
-        .then((r) => r !== 'ok' && console.log('[xbox-play] Xbox button: no active stream'))
-        .catch(() => {});
-    } else if (ctrl && input.shift && key.toLowerCase() === 'g') openGamepadTester();
+    else if (ctrl && input.shift && key.toLowerCase() === 'g') openGamepadTester();
     else if (ctrl && input.shift && key.toLowerCase() === 'u') {
       updateBetterXcloud().then(() => wc.reload());
     } else handled = false;
@@ -307,7 +408,29 @@ function createWindow() {
     if (details.reason !== 'clean-exit') setTimeout(() => mainWindow?.reload(), 1500);
   });
 
-  mainWindow.loadURL(cfg.startUrl, { userAgent });
+  // Remote Play only: remember the console, send Cloud Gaming pages back to the console list.
+  let lastRedirect = 0;
+  const onNavigated = (url) => {
+    const page = lib.classifyXboxUrl(url);
+    if (!page) return;
+    if (page.type === 'launch') {
+      const last = state.lastConsole;
+      if (!last || last.consoleId !== page.consoleId || last.locale !== page.locale) {
+        state.lastConsole = { locale: page.locale, consoleId: page.consoleId };
+        saveState();
+      }
+    } else if (page.type === 'cloud' && cfg.remotePlayOnly && !cfg.url) {
+      if (Date.now() - lastRedirect < 3000) return; // never loop
+      lastRedirect = Date.now();
+      mainWindow.webContents.loadURL(lib.consolesUrl(page.locale));
+    }
+  };
+  mainWindow.webContents.on('did-navigate', (_e, url) => onNavigated(url));
+  mainWindow.webContents.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+    if (isMainFrame) onNavigated(url);
+  });
+
+  mainWindow.loadURL(lib.chooseStartUrl(cfg, state), { userAgent });
 }
 
 Menu.setApplicationMenu(null);
@@ -315,6 +438,8 @@ Menu.setApplicationMenu(null);
 app.whenReady().then(() => {
   const hadScript = Boolean(betterXcloud);
   createWindow();
+  scanGuideButtons();
+  setInterval(scanGuideButtons, 3000);
   if (cfg.betterXcloud && (cfg.autoUpdateBetterXcloud || !hadScript)) {
     // With no local copy at all, download it and reload so it is active right away.
     updateBetterXcloud().then((updated) => {

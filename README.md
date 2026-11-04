@@ -1,12 +1,14 @@
 # Xbox Play
 
-Xbox **Remote Play** (gra z własnej konsoli) i **Cloud Gaming** na Linuksie w osobnym oknie,
-dopracowane pod **Wayland / Hyprland**. To lekka nakładka na systemowy Electron, która otwiera
-`xbox.com/play` z wbudowanym [Better xCloud](https://github.com/redphx/better-xcloud).
+Xbox **Remote Play** (gra z własnej konsoli) na Linuksie w osobnym oknie, dopracowane pod
+**Wayland / Hyprland**. To lekka nakładka na systemowy Electron, która otwiera Remote Play z
+`xbox.com` z wbudowanym [Better xCloud](https://github.com/redphx/better-xcloud).
 
-- 🎮 pad Xbox (USB / Bluetooth / adapter) działa od razu
-- 🖱️ **mysz i klawiatura**: emulacja pada (Better xCloud) + natywna obsługa w grach, które ją mają
-- 📺 1080p (HQ) w Remote Play i xCloud, user agent Edge (najlepsza jakość od Microsoftu)
+- 🎮 tylko Remote Play: start od razu na Twojej konsoli, bez strony Cloud Gaming
+- 🔁 automatyczne łączenie z ostatnio używaną konsolą
+- 🕹️ pad Xbox (USB / Bluetooth / adapter), **łącznie z przyciskiem Xbox**
+- ⌨️ **mysz i klawiatura** zamieniane na pada (mapowanie do edycji)
+- 📺 1080p (HQ), user agent Edge (najlepsza jakość od Microsoftu)
 - 🪟 natywny Wayland, pełny ekran, ekran nie gaśnie podczas grania (działa z `hypridle`)
 - 🔄 Better xCloud aktualizuje się sam przy starcie
 - 🔒 logowanie Microsoft zostaje zapamiętane; obce linki otwierają się w zwykłej przeglądarce
@@ -25,44 +27,52 @@ cd xbox && git pull && makepkg -si
 
 Odinstalowanie: `sudo pacman -R xbox-play` (ustawienia i logowanie zostają w `~/.config/xbox-play`).
 
-## Pierwsze uruchomienie
+## Jak to działa
 
 1. Na Xboxie: **Ustawienia → Urządzenia i połączenia → Funkcje zdalne → Włącz funkcje zdalne**.
 2. Uruchom **Xbox Play** z menu aplikacji albo komendą `xbox-play`.
 3. Zaloguj się kontem Microsoft (tym samym co na konsoli).
-4. Kliknij przycisk **Remote Play** w górnym pasku (dodaje go Better xCloud) i wybierz konsolę.
-   Możesz też od razu otwierać listę konsol: `xbox-play --remote-play`.
+4. Wybierz konsolę i **Graj zdalnie na tym urządzeniu**.
+
+Od tej pory aplikacja **przy każdym starcie łączy się od razu z tą konsolą**. Gdy zakończysz
+grę albo połączenie się nie uda, wracasz na listę konsol (nigdy na Cloud Gaming).
+Listę konsol otworzysz też w każdej chwili przez **Ctrl+Shift+C** albo `xbox-play --pick`.
+
+> Włączaj Xboxa przyciskiem na konsoli, nie padem: pad włączony przy konsoli łączy się z nią,
+> a nie z komputerem.
+
+## Przycisk Xbox
+
+- **Przycisk Xbox na padzie** działa: aplikacja czyta go bezpośrednio z pada (`/dev/input`),
+  więc nie zależy od tego, czy przeglądarka go widzi. Krótkie naciśnięcie otwiera przewodnik
+  na konsoli.
+- **F9** robi to samo z klawiatury (przytrzymanie = przytrzymanie przycisku Xbox).
+- W trybie myszy i klawiatury przycisk Xbox jest też pod klawiszem **`** (pod Esc).
+- **Ctrl+Shift+G** otwiera test pada (przycisk Xbox to nr 16).
 
 ## Mysz i klawiatura
 
-Są dwa tryby (ustawienia: przycisk **Better xCloud** w górnym pasku):
+Remote Play od Microsoftu nie przyjmuje myszy i klawiatury, więc aplikacja zamienia je na pada
+(mapper z Better xCloud):
 
-| Tryb | Jak działa | Kiedy |
-|---|---|---|
-| **Emulacja pada** (włączona domyślnie) | mysz = prawa gałka, klawisze = przyciski pada; mapowanie zmienisz w ustawieniach | Remote Play i Cloud Gaming, każda gra |
-| **Natywna obsługa** | gra dostaje prawdziwą mysz i klawiaturę | tylko Cloud Gaming (xCloud), w grach, które to wspierają |
+1. W trakcie gry naciśnij **F8** i kliknij w obraz, żeby złapać kursor.
+2. Mysz = prawa gałka, lewy/prawy przycisk myszy = RT/LT, WASD = lewa gałka, Spacja = A,
+   Enter = Menu, Tab = View, **`** = Xbox (pełna lista i edycja w ustawieniach).
+3. **Przytrzymaj Esc ~1 s**, żeby zwolnić kursor; **F8** wyłącza tryb.
 
-W **Remote Play** Better xCloud wyłącza natywną mysz i klawiaturę, więc działa tylko emulacja.
-Po rozpoczęciu gry:
+Mapowanie zmienisz w: fioletowy przycisk **Better xCloud** → **Mysz i klawiatura** (presety
+"Standard" i "Shooter" albo własny), tam też czułość myszy.
 
-- **F8**: włącz/wyłącz emulację myszy i klawiatury (potem kliknij w obraz, żeby złapać kursor)
-- **przytrzymaj Esc ~1 s**: zwolnij kursor
-
-### Przycisk Xbox
-
-Jeśli przycisk Xbox na padzie nie działa w grze, naciśnij **F9**: aplikacja wyśle wciśnięcie
-przycisku Xbox prosto do konsoli. **Ctrl+Shift+G** otwiera test pada: przycisk Xbox to nr 16.
-Jeśli się nie podświetla, przeglądarka go po prostu nie dostaje od sterownika.
-
-> Better xCloud ostrzega, że emulacja myszy w grach online może być traktowana jak oszukiwanie.
+> Better xCloud ostrzega, że celowanie myszą w grach online może być traktowane jak oszukiwanie.
 
 ## Skróty
 
 | Klawisz | Akcja |
 |---|---|
 | **F11** | pełny ekran |
-| **F9** | przycisk Xbox (przewodnik) w trakcie gry |
-| **F8** | emulacja myszy i klawiatury (Better xCloud) |
+| **F9** | przycisk Xbox |
+| **F8** | mysz i klawiatura jako pad (włącz/wyłącz) |
+| **Ctrl+Shift+C** | lista konsol |
 | **Ctrl+Shift+G** | test pada |
 | **F5 / Ctrl+R** | odśwież |
 | **Ctrl+Shift+U** | wymuś aktualizację Better xCloud i odśwież |
@@ -89,22 +99,26 @@ Linia poleceń:
 | Opcja | Działanie |
 |---|---|
 | `--fullscreen` / `--windowed` | start w pełnym ekranie / w oknie |
-| `--remote-play` | otwórz od razu listę konsol |
+| `--pick` | pokaż listę konsol zamiast łączyć się automatycznie |
+| `--cloud` | wyłącz tryb „tylko Remote Play” (Cloud Gaming dostępny) |
 | `--url=https://…` | inna strona startowa |
 | `--vaapi` | sprzętowe dekodowanie wideo (VA-API) |
 | `--no-bx` | bez Better xCloud |
 
-Plik `~/.config/xbox-play/config.json` (tworzony przy pierwszym starcie):
+Plik `~/.config/xbox-play/config.json` (tworzony przy pierwszym starcie; brakujące klucze
+mają wartości domyślne):
 
 ```json
 {
-  "startUrl": "https://www.xbox.com/play",
+  "remotePlayOnly": true,
+  "autoConnect": true,
   "fullscreen": false,
   "betterXcloud": true,
   "autoUpdateBetterXcloud": true,
   "userAgent": "edge-windows",
   "vaapi": false,
   "hideScrollbars": true,
+  "startUrl": "https://www.xbox.com/play",
   "betterXcloudDefaults": {
     "mkb.enabled": true,
     "stream.video.resolution": "1080p-hq",
@@ -116,9 +130,10 @@ Plik `~/.config/xbox-play/config.json` (tworzony przy pierwszym starcie):
 }
 ```
 
-`betterXcloudDefaults` są ustawiane tylko raz, jeśli sam ich nie zmieniłeś w ustawieniach
-Better xCloud. Dodatkowe flagi Chromium możesz wpisać do `~/.config/xbox-play-flags.conf`
-(jedna na linię).
+- `startUrl` jest używany tylko przy `"remotePlayOnly": false`.
+- Ostatnia konsola jest zapisana w `~/.config/xbox-play/state.json` (usuń plik, żeby ją zapomnieć).
+- `betterXcloudDefaults` są ustawiane tylko raz, jeśli sam ich nie zmieniłeś w Better xCloud.
+- Dodatkowe flagi Chromium: `~/.config/xbox-play-flags.conf` (jedna na linię).
 
 ### VA-API
 

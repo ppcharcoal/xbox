@@ -77,7 +77,11 @@ function edgeUserAgent(chromeVersion) {
 }
 
 const DEFAULT_CONFIG = {
-  // Start page. Remote Play: Better xCloud adds a "Remote Play" button in the header.
+  // Remote Play only: start on your consoles, send every Cloud Gaming page back there.
+  remotePlayOnly: true,
+  // Connect straight to the console you played on last time.
+  autoConnect: true,
+  // Start page when remotePlayOnly is false.
   startUrl: 'https://www.xbox.com/play',
   // Start in fullscreen (same as --fullscreen).
   fullscreen: false,
@@ -124,10 +128,149 @@ function parseArgs(argv) {
     else if (a === '--windowed') out.fullscreen = false;
     else if (a === '--vaapi') out.vaapi = true;
     else if (a === '--no-bx') out.betterXcloud = false;
-    else if (a === '--remote-play') out.startUrl = 'https://www.xbox.com/play/consoles';
-    else if (a.startsWith('--url=')) out.startUrl = a.slice(6);
+    else if (a === '--pick' || a === '--remote-play') out.pick = true;
+    else if (a === '--cloud') out.remotePlayOnly = false;
+    else if (a.startsWith('--url=')) out.url = a.slice(6);
   }
   return out;
+}
+
+// ---------- Remote Play routing ----------
+
+const LOCALE_RE = /^[a-z]{2,3}-[a-z]{2,4}$/i;
+
+// What kind of xbox.com page a URL is:
+//   { type: 'launch', locale, consoleId }  streaming from a console
+//   { type: 'consoles', locale }            the console list
+//   { type: 'cloud', locale }               any other /play page (Cloud Gaming)
+//   null                                    anything else (sign-in, other sites, …)
+function classifyXboxUrl(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' || u.hostname !== 'www.xbox.com') return null;
+  const m = u.pathname.match(/^\/([^/]+)\/play(\/.*)?$/);
+  if (!m || !LOCALE_RE.test(m[1])) return null;
+  const locale = m[1];
+  const rest = m[2] || '';
+  const launch = rest.match(/^\/consoles\/launch\/([^/?#]+)/);
+  if (launch) return { type: 'launch', locale, consoleId: decodeURIComponent(launch[1]) };
+  if (/^\/consoles(\/|$)/.test(rest)) return { type: 'consoles', locale };
+  return { type: 'cloud', locale };
+}
+
+function consolesUrl(locale) {
+  return locale && LOCALE_RE.test(locale)
+    ? `https://www.xbox.com/${locale}/play/consoles`
+    : 'https://www.xbox.com/play/consoles';
+}
+
+function launchUrl(locale, consoleId) {
+  if (!LOCALE_RE.test(String(locale)) || !/^[A-Za-z0-9_-]{4,64}$/.test(String(consoleId))) return null;
+  return `https://www.xbox.com/${locale}/play/consoles/launch/${consoleId}`;
+}
+
+function chooseStartUrl(cfg, state) {
+  if (cfg.url) return cfg.url;
+  if (!cfg.remotePlayOnly) return cfg.startUrl;
+  const last = state && state.lastConsole;
+  if (cfg.autoConnect && !cfg.pick && last) {
+    const url = launchUrl(last.locale, last.consoleId);
+    if (url) return url;
+  }
+  return consolesUrl(last && last.locale);
+}
+
+// ---------- Xbox (guide) button ----------
+
+// Injected into the page before Better xCloud. Lets the app press the Xbox
+// button on the real pad as the page sees it (Gamepad API button 16), so it
+// goes through Better xCloud's own Xbox-button handling. Also makes sure every
+// pad reports a button 16 even if the driver did not map one.
+// window.__xboxPlayHome(pressed) returns true if a real pad is connected.
+const HOME_BUTTON_OVERRIDE_JS = `(function () {
+  if (window.__xboxPlayHome || !window.Gamepad) return;
+  var proto = Gamepad.prototype;
+  var bDesc = Object.getOwnPropertyDescriptor(proto, 'buttons');
+  var tDesc = Object.getOwnPropertyDescriptor(proto, 'timestamp');
+  if (!bDesc || !bDesc.get || !tDesc || !tDesc.get) return;
+  var pressed = false, changedAt = 0;
+  var RELEASED = { pressed: false, touched: false, value: 0 };
+  var PRESSED = { pressed: true, touched: true, value: 1 };
+  Object.defineProperty(proto, 'buttons', {
+    configurable: true, enumerable: bDesc.enumerable,
+    get: function () {
+      var b = bDesc.get.call(this);
+      if (!pressed && b.length > 16) return b;
+      var out = Array.prototype.slice.call(b);
+      while (out.length < 17) out.push(RELEASED);
+      if (pressed) out[16] = PRESSED;
+      return out;
+    }
+  });
+  Object.defineProperty(proto, 'timestamp', {
+    configurable: true, enumerable: tDesc.enumerable,
+    get: function () { return Math.max(tDesc.get.call(this), changedAt); }
+  });
+  Object.defineProperty(window, '__xboxPlayHome', {
+    value: function (p) {
+      p = !!p;
+      if (p !== pressed) { pressed = p; changedAt = performance.now(); }
+      var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (var i = 0; i < pads.length; i++) if (pads[i] instanceof Gamepad) return true;
+      return false;
+    }
+  });
+})();
+`;
+
+// ---------- evdev (reading the pad's Xbox button straight from Linux) ----------
+
+const EV_KEY = 1;
+const BTN_MODE = 0x13c; // Xbox / guide button
+const INPUT_EVENT_SIZE = 24; // struct input_event on 64-bit Linux
+
+// Is bit `bit` set in a /proc/bus/input/devices "B: KEY=" bitmap (hex words, most significant first)?
+function keyBitSet(keyField, bit) {
+  const words = String(keyField).trim().split(/\s+/).reverse();
+  const word = words[Math.floor(bit / 64)];
+  if (!word) return false;
+  try {
+    return ((BigInt('0x' + word) >> BigInt(bit % 64)) & 1n) === 1n;
+  } catch {
+    return false;
+  }
+}
+
+// Gamepads (they have a jsN handler) that report an Xbox/guide button.
+function findGuideButtonDevices(procDevicesText) {
+  const out = [];
+  for (const block of String(procDevicesText).split(/\n\s*\n/)) {
+    const name = (block.match(/^N: Name="(.*)"$/m) || [])[1] || '';
+    const handlers = (block.match(/^H: Handlers=(.*)$/m) || [])[1] || '';
+    const keys = (block.match(/^B: KEY=(.*)$/m) || [])[1];
+    const event = (handlers.match(/\bevent\d+\b/) || [])[0];
+    if (!event || !/\bjs\d+\b/.test(handlers) || !keys) continue;
+    if (keyBitSet(keys, BTN_MODE)) out.push({ name, event });
+  }
+  return out;
+}
+
+// Decode a buffer of input_event structs; returns [{type, code, value}] and leftover bytes.
+function parseInputEvents(buf) {
+  const events = [];
+  let off = 0;
+  for (; off + INPUT_EVENT_SIZE <= buf.length; off += INPUT_EVENT_SIZE) {
+    events.push({
+      type: buf.readUInt16LE(off + 16),
+      code: buf.readUInt16LE(off + 18),
+      value: buf.readInt32LE(off + 20),
+    });
+  }
+  return { events, rest: buf.subarray(off) };
 }
 
 // Page script that taps the Xbox (Nexus/guide) button on the active stream,
@@ -181,6 +324,17 @@ draw();
 </script></body></html>`;
 
 module.exports = {
+  classifyXboxUrl,
+  consolesUrl,
+  launchUrl,
+  chooseStartUrl,
+  HOME_BUTTON_OVERRIDE_JS,
+  EV_KEY,
+  BTN_MODE,
+  INPUT_EVENT_SIZE,
+  keyBitSet,
+  findGuideButtonDevices,
+  parseInputEvents,
   pressXboxButtonScript,
   GAMEPAD_TESTER_HTML,
   isTrustedUrl,
