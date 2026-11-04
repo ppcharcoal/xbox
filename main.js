@@ -96,7 +96,8 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow = null;
 
-app.on('second-instance', () => {
+app.on('second-instance', (_e, argv) => {
+  if (argv.includes('--editor')) return openEditor();
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
@@ -147,14 +148,115 @@ function getPatchedBetterXcloud() {
   return patchedBx.src;
 }
 
+// ---------- control profiles (mappings.json) ----------
+
+const MAPPINGS_PATH = path.join(USER_DIR, 'mappings.json');
+
+function loadMappings() {
+  try {
+    return lib.sanitizeProfiles(JSON.parse(fs.readFileSync(MAPPINGS_PATH, 'utf8')), lib.defaultProfiles(cfg));
+  } catch {
+    const fresh = lib.defaultProfiles(cfg);
+    writeMappings(fresh);
+    return fresh;
+  }
+}
+
+function writeMappings(data) {
+  try {
+    fs.mkdirSync(USER_DIR, { recursive: true });
+    const tmp = `${MAPPINGS_PATH}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+    fs.renameSync(tmp, MAPPINGS_PATH);
+  } catch (e) {
+    console.warn(`[xbox-play] Cannot save ${MAPPINGS_PATH}: ${e.message}`);
+  }
+}
+
+let mappings = loadMappings();
+
+function pageProfile() {
+  const p = lib.activeProfile(mappings);
+  return {
+    profileName: p.name,
+    mouseSensitivity: p.sensitivity,
+    invertY: p.invertY,
+    keyMapping: cfg.mapper ? p.mapping : {},
+  };
+}
+
+// Send the active profile to the game page right away (no reload needed).
+function applyProfileToPage(announce) {
+  const wc = mainWindow?.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  wc.executeJavaScript(
+    `window.__xboxPlayInput && window.__xboxPlayInput.setProfile(${JSON.stringify(pageProfile())}, ${announce ? 'true' : 'false'})`
+  ).catch(() => {});
+}
+
+function setMappings(data, announce) {
+  mappings = lib.sanitizeProfiles(data, mappings);
+  writeMappings(mappings);
+  applyProfileToPage(announce);
+  return mappings;
+}
+
+// ---------- controls editor window ----------
+
+let editorWindow = null;
+
+function openEditor() {
+  if (editorWindow) {
+    if (editorWindow.isMinimized()) editorWindow.restore();
+    return editorWindow.focus();
+  }
+  editorWindow = new BrowserWindow({
+    title: 'Xbox Play – sterowanie',
+    width: 1200,
+    height: 780,
+    minWidth: 980,
+    minHeight: 640,
+    backgroundColor: '#1d2230',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'editor-preload.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      spellcheck: false,
+    },
+  });
+  editorWindow.on('closed', () => (editorWindow = null));
+  editorWindow.webContents.on('will-navigate', (e) => e.preventDefault());
+  editorWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  editorWindow.loadFile(path.join(__dirname, 'editor.html'));
+}
+
+function fromEditor(event) {
+  return editorWindow && event.sender === editorWindow.webContents;
+}
+
+ipcMain.handle('mappings:get', (event) => {
+  if (!fromEditor(event)) return null;
+  return {
+    data: mappings,
+    defaultMapping: lib.DEFAULT_KEY_MAPPING,
+    reserved: [...lib.RESERVED_CODES],
+  };
+});
+
+ipcMain.handle('mappings:save', (event, data) => {
+  if (!fromEditor(event)) return null;
+  const before = mappings.active;
+  const saved = setMappings(data, false);
+  if (saved.active !== before) applyProfileToPage(true);
+  return saved;
+});
+
 // Our own in-page input layer (Xbox button, mouse & keyboard -> pad).
 const PAGE_INPUT_JS = fs.readFileSync(path.join(__dirname, 'page-input.js'), 'utf8');
 function pagePrelude() {
-  const pageCfg = {
-    mapper: cfg.mapper,
-    mouseSensitivity: cfg.mouseSensitivity,
-    keyMapping: cfg.mapper ? lib.buildKeyMapping(cfg.keyMapping) : {},
-  };
+  const pageCfg = { mapper: cfg.mapper, ...pageProfile() };
   return `window.__xboxPlayConfig = ${JSON.stringify(pageCfg)};\n${PAGE_INPUT_JS}\n`;
 }
 
@@ -275,7 +377,7 @@ function openGamepadTester() {
   });
   testerWindow.on('closed', () => (testerWindow = null));
   testerWindow.webContents.on('before-input-event', (e, input) => {
-    if (input.type === 'keyDown' && input.key === 'Escape') testerWindow.close();
+    if (input.type !== 'keyUp' && input.key === 'Escape') testerWindow.close();
   });
   testerWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lib.GAMEPAD_TESTER_HTML));
 }
@@ -338,12 +440,9 @@ function scanGuideButtons() {
 
 function handleShortcuts(win) {
   win.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F9') {
-      event.preventDefault();
-      if (!input.isAutoRepeat) setXboxButton(input.type === 'keyDown');
-      return;
-    }
-    if (input.type !== 'keyDown') return;
+    // F9 (Xbox button) is handled inside the page: blocking a key here also hides its
+    // release, so a held F9 would never be let go.
+    if (input.type !== 'keyDown' && input.type !== 'rawKeyDown') return;
     const ctrl = input.control || input.meta;
     const key = input.key;
     const wc = win.webContents;
@@ -359,6 +458,14 @@ function handleShortcuts(win) {
     else if (input.alt && key === 'ArrowLeft' && nav?.canGoBack()) nav.goBack();
     else if (input.alt && key === 'ArrowRight' && nav?.canGoForward()) nav.goForward();
     else if (ctrl && input.shift && key.toLowerCase() === 'g') openGamepadTester();
+    else if (ctrl && input.shift && key.toLowerCase() === 'm') openEditor();
+    else if (key === 'F7') {
+      // Next control profile, shown in the game and in the editor if it is open.
+      if (!input.isAutoRepeat) {
+        setMappings(lib.cycleProfile(mappings), true);
+        editorWindow?.webContents.send('mappings:changed', mappings);
+      }
+    }
     else if (ctrl && input.shift && key.toLowerCase() === 'u') {
       updateBetterXcloud().then(() => wc.reload());
     } else handled = false;
@@ -448,6 +555,7 @@ Menu.setApplicationMenu(null);
 app.whenReady().then(() => {
   const hadScript = Boolean(betterXcloud);
   createWindow();
+  if (process.argv.includes('--editor')) openEditor();
   scanGuideButtons();
   setInterval(scanGuideButtons, 3000);
   if (cfg.betterXcloud && (cfg.autoUpdateBetterXcloud || !hadScript)) {

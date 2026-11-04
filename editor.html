@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:">
+<title>Xbox Play – sterowanie</title>
+<style>
+  :root {
+    --bg: #1d2230;
+    --panel: #252b3a;
+    --line: #353d50;
+    --body: #343c4f;
+    --body-edge: #4b5469;
+    --part: #444d63;
+    --part-edge: #5c667e;
+    --bound: #4f6b8f;
+    --bound-edge: #7d9cc4;
+    --ink: #eef1f7;
+    --muted: #9aa3b5;
+    --cap: #ece6d8;
+    --cap-edge: #c6bda9;
+    --cap-ink: #1d2230;
+    --listen: #ffbf47;
+    --danger: #ff8a7a;
+    --ok: #9fd3a8;
+    font-family: "Noto Sans", "Cantarell", "DejaVu Sans", system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { display: grid; grid-template-rows: auto 1fr auto; background: var(--bg); }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--listen); outline-offset: 2px; }
+
+  /* ---------- top bar: profiles and mouse ---------- */
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px;
+    padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  .profiles { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .profiles label, .mouse label { color: var(--muted); font-size: 14px; }
+  select, .name-input {
+    height: 34px; min-width: 200px; padding: 0 10px; border-radius: 8px;
+    border: 1px solid var(--body-edge); background: var(--bg);
+  }
+  .btn {
+    height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--body-edge);
+    background: transparent; font-size: 14px;
+  }
+  .btn:hover { background: var(--body); }
+  .btn.confirm { border-color: var(--danger); color: var(--danger); }
+  .btn.primary { background: var(--cap); color: var(--cap-ink); border-color: var(--cap-edge); font-weight: 700; }
+  .mouse { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+  .mouse input[type=range] { width: 170px; accent-color: var(--cap); }
+  .sens-value { min-width: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .check { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ---------- main: controls around the pad ---------- */
+  main {
+    display: grid; grid-template-columns: minmax(250px, 1fr) minmax(380px, 1.35fr) minmax(250px, 1fr);
+    gap: 8px 20px; padding: 18px 24px; min-height: 0; overflow: auto;
+  }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+  .group h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .row {
+    display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 10px;
+    width: 100%; min-height: 36px; padding: 4px 8px; border-radius: 8px;
+    border: 1px solid transparent; background: transparent; text-align: left;
+  }
+  .row:hover, .row.hover { background: var(--panel); border-color: var(--line); }
+  .row.listening { border-color: var(--listen); background: rgba(255, 191, 71, 0.08); }
+  .row .name { font-size: 14px; }
+  .keys { display: flex; flex-wrap: wrap; gap: 6px; }
+  .keys .empty { color: var(--muted); font-size: 13px; }
+  .row.listening .keys::after {
+    content: "naciśnij…"; color: var(--listen); font-size: 13px; font-weight: 600; align-self: center;
+  }
+
+  .key {
+    display: inline-flex; align-items: center; gap: 4px; height: 26px; min-width: 28px;
+    padding: 0 8px 2px; border-radius: 6px; background: var(--cap); color: var(--cap-ink);
+    font-size: 12.5px; font-weight: 700; white-space: nowrap;
+    box-shadow: inset 0 -3px 0 var(--cap-edge), 0 1px 0 rgba(0, 0, 0, 0.35);
+  }
+  .key .remove {
+    display: none; width: 16px; height: 16px; margin-right: -4px; padding: 0; border: 0;
+    border-radius: 4px; background: transparent; color: var(--cap-ink); font-size: 14px; line-height: 14px;
+  }
+  .key:hover .remove, .key .remove:focus-visible { display: inline-block; }
+  .key .remove:hover { background: rgba(0, 0, 0, 0.12); }
+
+  .pad { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  .pad svg { width: 100%; max-width: 620px; height: auto; }
+  .pad .hint { margin: 0; max-width: 46ch; text-align: center; color: var(--muted); font-size: 14px; line-height: 1.5; }
+
+  .body { fill: var(--body); stroke: var(--body-edge); stroke-width: 2; }
+  .part { fill: var(--part); stroke: var(--part-edge); stroke-width: 1.5; cursor: pointer; transition: fill .12s; }
+  .part.bound { fill: var(--bound); stroke: var(--bound-edge); }
+  .part:hover, .part.hover { fill: #6a7896; }
+  .part.listening { fill: var(--listen); stroke: #fff2cf; }
+  .glyph { fill: var(--ink); font-size: 15px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+  .glyph.small { font-size: 11px; font-weight: 600; }
+  .listening + .glyph, .glyph.on-listen { fill: var(--cap-ink); }
+  @media (prefers-reduced-motion: no-preference) {
+    .part.listening { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 50% { fill: #ffd98c; } }
+  }
+
+  /* ---------- status bar ---------- */
+  footer {
+    display: flex; align-items: center; gap: 16px; min-height: 52px; padding: 10px 24px;
+    border-top: 1px solid var(--line); background: var(--panel); font-size: 14px;
+  }
+  #status { flex: 1; }
+  #status.listen { color: var(--listen); font-weight: 600; }
+  #status.error { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  .keys-help { color: var(--muted); }
+  .keys-help kbd {
+    padding: 1px 6px; border-radius: 4px; background: var(--body); color: var(--ink);
+    font: inherit; font-size: 12.5px; font-weight: 700;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sterowanie</h1>
+  <div class="profiles">
+    <label for="profile">Profil</label>
+    <select id="profile"></select>
+    <input id="name-input" class="name-input" maxlength="40" hidden aria-label="Nazwa profilu">
+    <button class="btn primary" id="name-ok" hidden>Zapisz nazwę</button>
+    <button class="btn" id="name-cancel" hidden>Anuluj</button>
+    <span id="profile-actions">
+      <button class="btn" id="new">Nowy profil</button>
+      <button class="btn" id="duplicate">Duplikuj</button>
+      <button class="btn" id="rename">Zmień nazwę</button>
+      <button class="btn" id="reset">Przywróć domyślne</button>
+      <button class="btn" id="delete">Usuń</button>
+    </span>
+  </div>
+  <div class="mouse">
+    <label for="sens">Czułość myszy</label>
+    <input type="range" id="sens" min="0.2" max="4" step="0.1">
+    <span class="sens-value" id="sens-value"></span>
+    <label class="check"><input type="checkbox" id="invert"> Odwróć oś Y</label>
+  </div>
+</header>
+
+<main>
+  <section class="side" id="left"></section>
+
+  <section class="pad">
+    <svg viewBox="0 0 600 400" role="img" aria-label="Pad: kliknij przycisk, żeby przypisać klawisz">
+      <!-- triggers and bumpers -->
+      <path class="part" data-target="LT" d="M118 92 C118 66 132 52 158 52 L180 52 C198 52 206 62 206 80 L206 96 L118 96 Z"/>
+      <text class="glyph small" x="162" y="76">LT</text>
+      <path class="part" data-target="RT" d="M394 96 L394 80 C394 62 402 52 420 52 L442 52 C468 52 482 66 482 92 L482 96 Z"/>
+      <text class="glyph small" x="438" y="76">RT</text>
+      <path class="part" data-target="LB" d="M104 116 C112 104 126 100 150 100 L226 100 L230 120 L104 120 Z"/>
+      <text class="glyph small" x="166" y="110">LB</text>
+      <path class="part" data-target="RB" d="M370 120 L374 100 L450 100 C474 100 488 104 496 116 L496 120 Z"/>
+      <text class="glyph small" x="434" y="110">RB</text>
+
+      <!-- body -->
+      <path class="body" d="M150 118 C110 118 84 138 74 176 L44 300 C34 346 58 378 96 378 C124 378 140 360 156 334 L186 292 L414 292 L444 334 C460 360 476 378 504 378 C542 378 566 346 556 300 L526 176 C516 138 490 118 450 118 Z"/>
+
+      <!-- left stick -->
+      <circle cx="165" cy="190" r="40" fill="#2b3242" stroke="#4b5469"/>
+      <path class="part" data-target="LS_Up" d="M165 154 l-11 14 h22 z"/>
+      <path class="part" data-target="LS_Down" d="M165 226 l-11 -14 h22 z"/>
+      <path class="part" data-target="LS_Left" d="M129 190 l14 -11 v22 z"/>
+      <path class="part" data-target="LS_Right" d="M201 190 l-14 -11 v22 z"/>
+      <circle class="part" data-target="L3" cx="165" cy="190" r="17"/>
+      <text class="glyph small" x="165" y="190">L3</text>
+
+      <!-- d-pad -->
+      <rect class="part" data-target="Up" x="219" y="230" width="24" height="25" rx="4"/>
+      <rect class="part" data-target="Down" x="219" y="279" width="24" height="25" rx="4"/>
+      <rect class="part" data-target="Left" x="194" y="255" width="25" height="24" rx="4"/>
+      <rect class="part" data-target="Right" x="243" y="255" width="25" height="24" rx="4"/>
+      <rect x="219" y="255" width="24" height="24" fill="#3b4357"/>
+
+      <!-- right stick -->
+      <circle cx="378" cy="266" r="40" fill="#2b3242" stroke="#4b5469"/>
+      <path class="part" data-target="RS_Up" d="M378 230 l-11 14 h22 z"/>
+      <path class="part" data-target="RS_Down" d="M378 302 l-11 -14 h22 z"/>
+      <path class="part" data-target="RS_Left" d="M342 266 l14 -11 v22 z"/>
+      <path class="part" data-target="RS_Right" d="M414 266 l-14 -11 v22 z"/>
+      <circle class="part" data-target="R3" cx="378" cy="266" r="17"/>
+      <text class="glyph small" x="378" y="266">R3</text>
+
+      <!-- face buttons -->
+      <circle class="part" data-target="Y" cx="440" cy="154" r="17"/><text class="glyph" x="440" y="154">Y</text>
+      <circle class="part" data-target="X" cx="404" cy="190" r="17"/><text class="glyph" x="404" y="190">X</text>
+      <circle class="part" data-target="B" cx="476" cy="190" r="17"/><text class="glyph" x="476" y="190">B</text>
+      <circle class="part" data-target="A" cx="440" cy="226" r="17"/><text class="glyph" x="440" y="226">A</text>
+
+      <!-- centre buttons -->
+      <rect class="part" data-target="View" x="244" y="180" width="30" height="20" rx="10"/>
+      <text class="glyph small" x="259" y="214">View</text>
+      <rect class="part" data-target="Menu" x="326" y="180" width="30" height="20" rx="10"/>
+      <text class="glyph small" x="341" y="214">Menu</text>
+      <circle class="part" data-target="Xbox" cx="300" cy="148" r="20"/>
+      <text class="glyph small" x="300" y="148">Xbox</text>
+    </svg>
+    <p class="hint">Kliknij przycisk na padzie albo na liście, a potem naciśnij klawisz lub przycisk myszy. Mysz zawsze steruje prawą gałką.</p>
+  </section>
+
+  <section class="side" id="right"></section>
+</main>
+
+<footer>
+  <span id="status">Zmiany zapisują się same i działają od razu w grze.</span>
+  <button class="btn" id="cancel-listen" hidden>Anuluj</button>
+  <span class="keys-help"><kbd>F8</kbd> w grze włącza mysz i klawiaturę, <kbd>F7</kbd> zmienia profil</span>
+</footer>
+
+<script src="editor.js"></script>
+</body>
+</html>

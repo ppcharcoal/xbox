@@ -17,6 +17,8 @@
 
   var MAPPING = CFG.keyMapping || {};
   var SENS = typeof CFG.mouseSensitivity === 'number' ? CFG.mouseSensitivity : 1;
+  var INVERT_Y = !!CFG.invertY;
+  var PROFILE = CFG.profileName || '';
   var MAPPER_ENABLED = CFG.mapper !== false;
   var TOGGLE_KEY = CFG.mapperToggleKey || 'F8';
 
@@ -185,8 +187,20 @@
     window.dispatchEvent(ev);
   }
 
-  // ---------------------------------------------------------------- toast
-  var toastEl = null, toastTimer = 0;
+  // ---------------------------------------------------------------- toast & mode badge
+  var toastEl = null, toastTimer = 0, badgeEl = null;
+  function showBadge(on) {
+    if (!document.body) return;
+    if (!badgeEl) {
+      badgeEl = document.createElement('div');
+      badgeEl.setAttribute('style', 'position:fixed;top:12px;right:14px;z-index:2147483647;padding:5px 11px;' +
+        'border-radius:999px;background:rgba(16,16,16,.72);color:#ffd27a;font:600 12px/1.4 system-ui,sans-serif;' +
+        'pointer-events:none;letter-spacing:.01em');
+    }
+    badgeEl.textContent = 'Mysz i klawiatura' + (PROFILE ? ' · ' + PROFILE : '');
+    if (on && !badgeEl.isConnected) document.body.appendChild(badgeEl);
+    if (!on && badgeEl.isConnected) badgeEl.remove();
+  }
   function toast(text) {
     if (!document.body) return;
     if (!toastEl) {
@@ -215,13 +229,15 @@
   function setMapper(on) {
     mapper.on = on;
     clearHeld();
+    showBadge(on);
     if (on) {
       announceVirtual(true);
-      toast('Mysz i klawiatura → pad: WŁ. Kliknij w obraz (F8 wyłącza, Esc zwalnia kursor)');
+      toast('Mysz i klawiatura WŁĄCZONE' + (PROFILE ? ' (profil: ' + PROFILE + ')' : '') +
+        '. Kliknij w obraz. F8 wyłącza, Esc zwalnia kursor.');
     } else {
       announceVirtual(false);
       if (document.pointerLockElement) document.exitPointerLock();
-      toast('Mysz i klawiatura → pad: WYŁ.');
+      toast('Mysz i klawiatura WYŁĄCZONE. Sterujesz padem.');
     }
   }
   function swallow(e) { e.preventDefault(); e.stopImmediatePropagation(); }
@@ -236,6 +252,12 @@
   }
 
   window.addEventListener('keydown', function (e) {
+    if (e.code === 'F9') {
+      // Xbox button from the keyboard; holding F9 holds the button.
+      swallow(e);
+      if (!e.repeat) setHome(true);
+      return;
+    }
     if (MAPPER_ENABLED && e.code === TOGGLE_KEY) {
       swallow(e);
       if (!e.repeat) setMapper(!mapper.on);
@@ -246,6 +268,7 @@
     if (!e.repeat) press(e.code, true);
   }, true);
   window.addEventListener('keyup', function (e) {
+    if (e.code === 'F9') { swallow(e); setHome(false); return; }
     if (MAPPER_ENABLED && e.code === TOGGLE_KEY) { swallow(e); return; }
     if (!mapper.on || !MAPPING[e.code]) return;
     swallow(e);
@@ -277,7 +300,7 @@
   window.addEventListener('mousemove', function (e) {
     if (!mapper.on || !document.pointerLockElement) return;
     var k = 0.045 * SENS;
-    var x = e.movementX * k, y = e.movementY * k;
+    var x = e.movementX * k, y = e.movementY * k * (INVERT_Y ? -1 : 1);
     var mag = Math.sqrt(x * x + y * y);
     if (mag > 0) {
       var shaped = Math.min(1, DEADZONE_COUNTERWEIGHT + mag * (1 - DEADZONE_COUNTERWEIGHT));
@@ -299,5 +322,21 @@
   });
   window.addEventListener('blur', function () { if (mapper.on) clearHeld(); if (home.pressed) setHome(false); });
 
-  window.__xboxPlayInput = { setMapper: setMapper, isMapperOn: function () { return mapper.on; } };
+  // Called by the app when a profile is edited or switched (F7).
+  function setProfile(p, announce) {
+    clearHeld();
+    MAPPING = (p && p.keyMapping) || {};
+    SENS = p && typeof p.mouseSensitivity === 'number' ? p.mouseSensitivity : 1;
+    INVERT_Y = !!(p && p.invertY);
+    PROFILE = (p && p.profileName) || '';
+    if (mapper.on) showBadge(true);
+    if (announce) toast('Profil sterowania: ' + PROFILE);
+  }
+
+  window.__xboxPlayInput = {
+    setMapper: setMapper,
+    setProfile: setProfile,
+    toast: toast,
+    isMapperOn: function () { return mapper.on; }
+  };
 })();

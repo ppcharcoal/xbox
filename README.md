@@ -71,17 +71,21 @@ który zamienia je na pada (działa razem z prawdziwym padem albo zamiast niego)
 | Tab | View | | Enter | Menu |
 | **`** | Xbox | | | |
 
-Mapowanie i czułość myszy zmienisz w `~/.config/xbox-play/config.json`, np.:
+### Edytor sterowania i profile
 
-```json
-"mouseSensitivity": 1.5,
-"keyMapping": { "KeyG": "Y", "KeyE": "" }
-```
+**Ctrl+Shift+M** (albo w menu aplikacji: *Xbox Play → Sterowanie*, albo `xbox-play --editor`)
+otwiera edytor:
 
-Klawisze to nazwy `KeyboardEvent.code` (`KeyG`, `Digit5`, `ShiftLeft`…), przyciski myszy to
-`Mouse0`/`Mouse1`/`Mouse2`, a `""` usuwa klawisz z mapowania. Cele: `A B X Y LB RB LT RT View
-Menu L3 R3 Up Down Left Right Xbox` oraz `LS_Up LS_Down LS_Left LS_Right RS_Up RS_Down RS_Left
-RS_Right`.
+- kliknij przycisk na rysunku pada albo na liście i naciśnij klawisz lub przycisk myszy,
+  który ma go zastępować (Esc anuluje); najedź na klawisz i kliknij **×**, żeby go usunąć,
+- suwak **czułość myszy** i **odwróć oś Y**,
+- **profile**, np. osobny dla każdej gry: *Nowy profil*, *Duplikuj*, *Zmień nazwę*, *Usuń*,
+  *Przywróć domyślne*,
+- zmiany zapisują się same i działają od razu w grze, bez odświeżania,
+- **F7** w grze przełącza na następny profil (nazwa pojawia się na ekranie).
+
+Klawisze zajęte przez aplikację (F5, F7, F8, F9, F11, F12, Esc) nie mogą być przypisane.
+Profile są zapisane w `~/.config/xbox-play/mappings.json`.
 
 > Celowanie myszą w grach online może być traktowane jak oszukiwanie.
 
@@ -92,6 +96,8 @@ RS_Right`.
 | **F11** | pełny ekran |
 | **F9** | przycisk Xbox |
 | **F8** | mysz i klawiatura jako pad (włącz/wyłącz) |
+| **F7** | następny profil sterowania |
+| **Ctrl+Shift+M** | edytor sterowania |
 | **Ctrl+Shift+C** | lista konsol |
 | **Ctrl+Shift+G** | test pada |
 | **F5 / Ctrl+R** | odśwież |
@@ -120,6 +126,7 @@ Linia poleceń:
 |---|---|
 | `--fullscreen` / `--windowed` | start w pełnym ekranie / w oknie |
 | `--pick` | pokaż listę konsol zamiast łączyć się automatycznie |
+| `--editor` | otwórz edytor sterowania |
 | `--cloud` | wyłącz tryb „tylko Remote Play” (Cloud Gaming dostępny) |
 | `--url=https://…` | inna strona startowa |
 | `--vaapi` | sprzętowe dekodowanie wideo (VA-API) |
@@ -139,8 +146,6 @@ mają wartości domyślne):
   "vaapi": false,
   "hideScrollbars": true,
   "mapper": true,
-  "mouseSensitivity": 1,
-  "keyMapping": {},
   "startUrl": "https://www.xbox.com/play",
   "betterXcloudDefaults": {
     "stream.video.resolution": "1080p-hq",
@@ -153,6 +158,7 @@ mają wartości domyślne):
 ```
 
 - `startUrl` jest używany tylko przy `"remotePlayOnly": false`.
+- Sterowanie myszą i klawiaturą ustawiasz w edytorze (Ctrl+Shift+M), nie w tym pliku.
 - Ostatnia konsola jest zapisana w `~/.config/xbox-play/state.json` (usuń plik, żeby ją zapomnieć).
 - `betterXcloudDefaults` są ustawiane tylko raz, jeśli sam ich nie zmieniłeś w Better xCloud.
 - Dodatkowe flagi Chromium: `~/.config/xbox-play-flags.conf` (jedna na linię).

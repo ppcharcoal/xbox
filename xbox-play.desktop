@@ -9,11 +9,15 @@ Terminal=false
 Categories=Game;
 Keywords=xbox;remote;play;console;konsola;
 StartupWMClass=xbox-play
-Actions=pick;fullscreen;
+Actions=pick;controls;fullscreen;
 
 [Desktop Action pick]
 Name=Wybierz konsolę
 Exec=xbox-play --pick
+
+[Desktop Action controls]
+Name=Sterowanie (mysz i klawiatura)
+Exec=xbox-play --editor
 
 [Desktop Action fullscreen]
 Name=Pełny ekran

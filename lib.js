@@ -142,6 +142,77 @@ function buildKeyMapping(changes) {
   return out;
 }
 
+// ---------- control profiles (mappings.json, edited in the editor window) ----------
+
+// Keys the app itself uses; they cannot be mapped.
+const RESERVED_CODES = new Set(['F5', 'F7', 'F8', 'F9', 'F11', 'F12', 'Escape']);
+const CODE_RE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
+const DEFAULT_PROFILE_NAME = 'Domyślny';
+
+function cleanName(name) {
+  return String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+function cleanMapping(mapping) {
+  const out = {};
+  if (!mapping || typeof mapping !== 'object') return out;
+  for (const [code, target] of Object.entries(mapping)) {
+    if (CODE_RE.test(code) && !RESERVED_CODES.has(code) && MAPPING_TARGETS.has(target)) out[code] = target;
+  }
+  return out;
+}
+
+function cleanProfile(p) {
+  const sens = Number(p && p.sensitivity);
+  return {
+    name: cleanName(p && p.name) || DEFAULT_PROFILE_NAME,
+    sensitivity: Number.isFinite(sens) ? Math.min(5, Math.max(0.1, Math.round(sens * 100) / 100)) : 1,
+    invertY: Boolean(p && p.invertY),
+    mapping: cleanMapping(p && p.mapping),
+  };
+}
+
+// Always returns a valid { version, active, profiles: [...] } with unique names.
+function sanitizeProfiles(data, fallback) {
+  const list = Array.isArray(data && data.profiles) ? data.profiles : [];
+  const profiles = [];
+  const seen = new Set();
+  for (const raw of list.slice(0, 50)) {
+    const p = cleanProfile(raw);
+    let name = p.name;
+    for (let n = 2; seen.has(name.toLowerCase()); n++) name = `${p.name.slice(0, 36)} (${n})`;
+    seen.add(name.toLowerCase());
+    profiles.push({ ...p, name });
+  }
+  if (!profiles.length) return fallback ? sanitizeProfiles(fallback) : defaultProfiles();
+  const active = profiles.some((p) => p.name === (data && data.active)) ? data.active : profiles[0].name;
+  return { version: 1, active, profiles };
+}
+
+// First run: one profile built from the old config.json settings (keyMapping, mouseSensitivity).
+function defaultProfiles(cfg) {
+  return {
+    version: 1,
+    active: DEFAULT_PROFILE_NAME,
+    profiles: [
+      cleanProfile({
+        name: DEFAULT_PROFILE_NAME,
+        sensitivity: cfg && cfg.mouseSensitivity,
+        mapping: buildKeyMapping(cfg && cfg.keyMapping),
+      }),
+    ],
+  };
+}
+
+function activeProfile(data) {
+  return data.profiles.find((p) => p.name === data.active) || data.profiles[0];
+}
+
+function cycleProfile(data) {
+  const i = data.profiles.findIndex((p) => p.name === data.active);
+  return { ...data, active: data.profiles[(i + 1) % data.profiles.length].name };
+}
+
 function mergeConfig(user) {
   const cfg = {
     ...DEFAULT_CONFIG,
@@ -325,6 +396,12 @@ draw();
 </script></body></html>`;
 
 module.exports = {
+  RESERVED_CODES,
+  DEFAULT_PROFILE_NAME,
+  sanitizeProfiles,
+  defaultProfiles,
+  activeProfile,
+  cycleProfile,
   DEFAULT_KEY_MAPPING,
   buildKeyMapping,
   patchBetterXcloud,
