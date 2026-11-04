@@ -182,6 +182,7 @@ function render() {
   $('#sens').value = p.sensitivity;
   $('#sens-value').textContent = `${p.sensitivity.toFixed(1)}×`;
   $('#invert').checked = p.invertY;
+  $('#smooth').checked = p.smoothing !== false;
 
   renderSide($('#left'), LAYOUT.left);
   renderSide($('#right'), LAYOUT.right);
@@ -302,6 +303,10 @@ $('#sens').addEventListener('input', (e) => {
   $('#sens-value').textContent = `${profile().sensitivity.toFixed(1)}×`;
   save();
 });
+$('#smooth').addEventListener('change', (e) => {
+  profile().smoothing = e.target.checked;
+  save(e.target.checked ? 'Wygładzanie ruchu myszy włączone.' : 'Wygładzanie ruchu myszy wyłączone.');
+});
 $('#invert').addEventListener('change', (e) => {
   profile().invertY = e.target.checked;
   save(e.target.checked ? 'Oś Y myszy odwrócona.' : 'Oś Y myszy normalna.');
@@ -345,8 +350,8 @@ function confirmName() {
     data.active = name;
     save(`Zmieniono nazwę na: ${name}.`);
   } else {
-    const base = nameMode === 'duplicate' ? profile() : { sensitivity: 1, invertY: false, mapping: defaultMapping };
-    data.profiles.push({ name, sensitivity: base.sensitivity, invertY: base.invertY, mapping: { ...base.mapping } });
+    const base = nameMode === 'duplicate' ? profile() : { sensitivity: 1, invertY: false, smoothing: true, mapping: defaultMapping };
+    data.profiles.push({ name, sensitivity: base.sensitivity, invertY: base.invertY, smoothing: base.smoothing !== false, mapping: { ...base.mapping } });
     data.active = name;
     save(`Utworzono profil: ${name}.`);
   }
@@ -398,6 +403,7 @@ twoStep($('#reset'), 'Na pewno przywrócić?', () => {
   p.mapping = { ...defaultMapping };
   p.sensitivity = 1;
   p.invertY = false;
+  p.smoothing = true;
   save(`Przywrócono domyślne sterowanie w profilu: ${p.name}.`);
   render();
 });

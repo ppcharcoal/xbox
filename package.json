@@ -1,6 +1,6 @@
 {
   "name": "xbox-play",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Xbox Remote Play / Cloud Gaming for Linux (Wayland, Hyprland) with Better xCloud",
   "main": "main.js",
   "desktopName": "xbox-play.desktop",

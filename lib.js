@@ -179,6 +179,7 @@ function cleanProfile(p) {
     name: cleanName(p && p.name) || DEFAULT_PROFILE_NAME,
     sensitivity: Number.isFinite(sens) ? Math.min(5, Math.max(0.1, Math.round(sens * 100) / 100)) : 1,
     invertY: Boolean(p && p.invertY),
+    smoothing: !(p && p.smoothing === false),
     mapping: cleanMapping(p && p.mapping),
   };
 }

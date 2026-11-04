@@ -181,6 +181,7 @@ function pageProfile() {
     profileName: p.name,
     mouseSensitivity: p.sensitivity,
     invertY: p.invertY,
+    smoothing: p.smoothing,
     keyMapping: cfg.mapper ? p.mapping : {},
   };
 }

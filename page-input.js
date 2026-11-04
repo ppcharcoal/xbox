@@ -18,6 +18,7 @@
   var MAPPING = CFG.keyMapping || {};
   var SENS = typeof CFG.mouseSensitivity === 'number' ? CFG.mouseSensitivity : 1;
   var INVERT_Y = !!CFG.invertY;
+  var SMOOTH = CFG.smoothing !== false;
   var PROFILE = CFG.profileName || '';
   var MAPPER_ENABLED = CFG.mapper !== false;
   var TOGGLE_KEY = CFG.mapperToggleKey || 'F8';
@@ -235,6 +236,7 @@
     var hadXbox = false;
     for (var code in mapper.held) if (targetsOf(code).indexOf('Xbox') >= 0) hadXbox = true;
     mapper.held = {};
+    resetSmooth();
     mapper.mouseX = mapper.mouseY = 0;
     if (hadXbox) setHome(false);
     touch();
@@ -326,8 +328,57 @@
   }, { capture: true, passive: false });
 
   var DEADZONE_COUNTERWEIGHT = 0.2; // small mouse moves still beat the game's stick deadzone
+
+  function shapeStick(x, y) {
+    var mag = Math.sqrt(x * x + y * y);
+    if (!mag) return [0, 0];
+    var shaped = Math.min(1, DEADZONE_COUNTERWEIGHT + mag * (1 - DEADZONE_COUNTERWEIGHT));
+    return [x / mag * shaped, y / mag * shaped];
+  }
+
+  // Smoothing: instead of jumping the stick on every mouse event, measure how fast the
+  // mouse moves (pixels per ms, every 8 ms) and glide the stick towards that, so the
+  // camera follows the hand like a desktop cursor rather than in steps.
+  var smooth = { dx: 0, dy: 0, x: 0, y: 0, last: 0, lastMove: 0, timer: 0 };
+  var SMOOTH_TICK = 8;      // ms
+  var SMOOTH_TAU = 18;      // ms, how quickly the stick follows
+  var SMOOTH_GAIN = 0.35;   // stick per (px/ms) at sensitivity 1
+  function smoothTick() {
+    var now = performance.now();
+    var dt = Math.max(1, now - smooth.last);
+    smooth.last = now;
+    var t = shapeStick(smooth.dx / dt * SMOOTH_GAIN * SENS, smooth.dy / dt * SMOOTH_GAIN * SENS);
+    smooth.dx = smooth.dy = 0;
+    var a = 1 - Math.exp(-dt / SMOOTH_TAU);
+    smooth.x += (t[0] - smooth.x) * a;
+    smooth.y += (t[1] - smooth.y) * a;
+    if (now - smooth.lastMove > 120 && Math.abs(smooth.x) < 0.02 && Math.abs(smooth.y) < 0.02) {
+      smooth.x = smooth.y = 0;
+      clearInterval(smooth.timer);
+      smooth.timer = 0;
+    }
+    mapper.mouseX = smooth.x;
+    mapper.mouseY = smooth.y;
+    touch();
+  }
+  function resetSmooth() {
+    clearInterval(smooth.timer);
+    smooth.timer = 0;
+    smooth.dx = smooth.dy = smooth.x = smooth.y = 0;
+  }
+
   window.addEventListener('mousemove', function (e) {
     if (!mapper.on || !document.pointerLockElement) return;
+    if (SMOOTH) {
+      smooth.dx += e.movementX;
+      smooth.dy += e.movementY * (INVERT_Y ? -1 : 1);
+      smooth.lastMove = performance.now();
+      if (!smooth.timer) {
+        smooth.last = performance.now() - SMOOTH_TICK;
+        smooth.timer = setInterval(smoothTick, SMOOTH_TICK);
+      }
+      return;
+    }
     var k = 0.045 * SENS;
     var x = e.movementX * k, y = e.movementY * k * (INVERT_Y ? -1 : 1);
     var mag = Math.sqrt(x * x + y * y);
@@ -345,6 +396,7 @@
     if (!document.pointerLockElement && mapper.on) {
       // Esc released the cursor: let go of everything the mouse was holding.
       for (var code in mapper.held) if (code.indexOf('Mouse') === 0) delete mapper.held[code];
+      resetSmooth();
       mapper.mouseX = mapper.mouseY = 0;
       touch();
     }
@@ -357,6 +409,8 @@
     MAPPING = (p && p.keyMapping) || {};
     SENS = p && typeof p.mouseSensitivity === 'number' ? p.mouseSensitivity : 1;
     INVERT_Y = !!(p && p.invertY);
+    SMOOTH = !(p && p.smoothing === false);
+    resetSmooth();
     PROFILE = (p && p.profileName) || '';
     if (mapper.on) showBadge(true);
     if (announce) toast('Profil sterowania: ' + PROFILE);
