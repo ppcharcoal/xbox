@@ -209,6 +209,24 @@ function blockSleep(on) {
   }
 }
 
+let testerWindow = null;
+function openGamepadTester() {
+  if (testerWindow) return testerWindow.focus();
+  testerWindow = new BrowserWindow({
+    title: 'Test pada',
+    width: 900,
+    height: 520,
+    backgroundColor: '#111111',
+    autoHideMenuBar: true,
+    webPreferences: { sandbox: true, contextIsolation: true },
+  });
+  testerWindow.on('closed', () => (testerWindow = null));
+  testerWindow.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') testerWindow.close();
+  });
+  testerWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lib.GAMEPAD_TESTER_HTML));
+}
+
 function handleShortcuts(win) {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
@@ -225,6 +243,11 @@ function handleShortcuts(win) {
     else if (ctrl && key.toLowerCase() === 'q') app.quit();
     else if (input.alt && key === 'ArrowLeft' && nav?.canGoBack()) nav.goBack();
     else if (input.alt && key === 'ArrowRight' && nav?.canGoForward()) nav.goForward();
+    else if (key === 'F9') {
+      wc.executeJavaScript(lib.pressXboxButtonScript(0))
+        .then((r) => r !== 'ok' && console.log('[xbox-play] Xbox button: no active stream'))
+        .catch(() => {});
+    } else if (ctrl && input.shift && key.toLowerCase() === 'g') openGamepadTester();
     else if (ctrl && input.shift && key.toLowerCase() === 'u') {
       updateBetterXcloud().then(() => wc.reload());
     } else handled = false;

@@ -39,11 +39,20 @@ Są dwa tryby (ustawienia: przycisk **Better xCloud** w górnym pasku):
 
 | Tryb | Jak działa | Kiedy |
 |---|---|---|
-| **Natywna obsługa** | gra dostaje prawdziwą mysz i klawiaturę | gry, które to wspierają na Xboxie (Fortnite, CoD, Minecraft…) |
-| **Emulacja pada** (włączona domyślnie) | mysz = prawa gałka, klawisze = przyciski pada; mapowanie zmienisz w ustawieniach | wszystkie pozostałe gry |
+| **Emulacja pada** (włączona domyślnie) | mysz = prawa gałka, klawisze = przyciski pada; mapowanie zmienisz w ustawieniach | Remote Play i Cloud Gaming, każda gra |
+| **Natywna obsługa** | gra dostaje prawdziwą mysz i klawiaturę | tylko Cloud Gaming (xCloud), w grach, które to wspierają |
 
-- **F8**: włącz/wyłącz emulację myszy i klawiatury w trakcie gry
+W **Remote Play** Better xCloud wyłącza natywną mysz i klawiaturę, więc działa tylko emulacja.
+Po rozpoczęciu gry:
+
+- **F8**: włącz/wyłącz emulację myszy i klawiatury (potem kliknij w obraz, żeby złapać kursor)
 - **przytrzymaj Esc ~1 s**: zwolnij kursor
+
+### Przycisk Xbox
+
+Jeśli przycisk Xbox na padzie nie działa w grze, naciśnij **F9**: aplikacja wyśle wciśnięcie
+przycisku Xbox prosto do konsoli. **Ctrl+Shift+G** otwiera test pada: przycisk Xbox to nr 16.
+Jeśli się nie podświetla, przeglądarka go po prostu nie dostaje od sterownika.
 
 > Better xCloud ostrzega, że emulacja myszy w grach online może być traktowana jak oszukiwanie.
 
@@ -52,6 +61,9 @@ Są dwa tryby (ustawienia: przycisk **Better xCloud** w górnym pasku):
 | Klawisz | Akcja |
 |---|---|
 | **F11** | pełny ekran |
+| **F9** | przycisk Xbox (przewodnik) w trakcie gry |
+| **F8** | emulacja myszy i klawiatury (Better xCloud) |
+| **Ctrl+Shift+G** | test pada |
 | **F5 / Ctrl+R** | odśwież |
 | **Ctrl+Shift+U** | wymuś aktualizację Better xCloud i odśwież |
 | **Alt+←/→** | wstecz / dalej |

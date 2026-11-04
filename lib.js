@@ -130,7 +130,59 @@ function parseArgs(argv) {
   return out;
 }
 
+// Page script that taps the Xbox (Nexus/guide) button on the active stream,
+// through the input channel Better xCloud exposes. Returns "ok" or "no-stream".
+function pressXboxButtonScript(gamepadIndex = 0) {
+  return `(function () {
+  var ic = window.BX_EXPOSED && window.BX_EXPOSED.inputChannel;
+  if (!ic || typeof ic.sendGamepadInput !== 'function') return 'no-stream';
+  function state(nexus) {
+    return { GamepadIndex: ${Number(gamepadIndex) | 0}, A: 0, B: 0, X: 0, Y: 0,
+      LeftShoulder: 0, RightShoulder: 0, LeftTrigger: 0, RightTrigger: 0,
+      View: 0, Menu: 0, LeftThumb: 0, RightThumb: 0,
+      DPadUp: 0, DPadDown: 0, DPadLeft: 0, DPadRight: 0, Nexus: nexus,
+      LeftThumbXAxis: 0, LeftThumbYAxis: 0, RightThumbXAxis: 0, RightThumbYAxis: 0,
+      PhysicalPhysicality: 0, VirtualPhysicality: 0, Dirty: true, Virtual: false };
+  }
+  ic.sendGamepadInput(performance.now(), [state(1)]);
+  setTimeout(function () { ic.sendGamepadInput(performance.now(), [state(0)]); }, 120);
+  return 'ok';
+})()`;
+}
+
+// Small self-contained page that shows what the browser sees from each pad.
+const GAMEPAD_TESTER_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<title>Test pada</title><style>
+body{margin:0;padding:20px;background:#111;color:#eee;font:15px/1.5 system-ui,sans-serif}
+h1{font-size:18px;margin:0 0 4px}p{color:#aaa;margin:0 0 16px}
+.pad{background:#1c1f24;border-radius:10px;padding:14px;margin-bottom:14px}
+.id{font-weight:600;margin-bottom:8px;word-break:break-all}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.b{min-width:44px;padding:6px 8px;border-radius:6px;background:#2a2e35;text-align:center;font-variant-numeric:tabular-nums}
+.b.on{background:#3ddc84;color:#000;font-weight:700}
+.b small{display:block;font-size:11px;opacity:.75}
+.axes{margin-top:8px;color:#bbb;font-variant-numeric:tabular-nums}
+</style></head><body>
+<h1>Test pada</h1>
+<p>Naciśnij dowolny przycisk na padzie. Przycisk Xbox to nr <b>16</b> (Nexus). Zamknij okno, gdy skończysz.</p>
+<div id="out">Brak pada — naciśnij przycisk, żeby go wykryć.</div>
+<script>
+var names={0:"A",1:"B",2:"X",3:"Y",4:"LB",5:"RB",6:"LT",7:"RT",8:"View",9:"Menu",10:"L3",11:"R3",12:"↑",13:"↓",14:"←",15:"→",16:"Xbox",17:"Share"};
+function draw(){
+  var pads=[].slice.call(navigator.getGamepads()).filter(Boolean),out=document.getElementById("out");
+  if(pads.length){out.innerHTML=pads.map(function(g){
+    return '<div class="pad"><div class="id">#'+g.index+' '+g.id+' — mapping: '+(g.mapping||"brak")+', przyciski: '+g.buttons.length+'</div><div class="btns">'+
+      g.buttons.map(function(b,i){return '<div class="b'+(b.pressed?' on':'')+'">'+i+'<small>'+(names[i]||"")+'</small></div>';}).join("")+
+      '</div><div class="axes">osie: '+g.axes.map(function(a){return a.toFixed(2);}).join("  ")+'</div></div>';
+  }).join("");}
+  requestAnimationFrame(draw);
+}
+draw();
+</script></body></html>`;
+
 module.exports = {
+  pressXboxButtonScript,
+  GAMEPAD_TESTER_HTML,
   isTrustedUrl,
   isBetterXcloudPage,
   parseUserscript,
