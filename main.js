@@ -121,6 +121,11 @@ ipcMain.on('bx:get', (event, href) => {
 
 // ---------- window ----------
 
+const HIDE_SCROLLBARS_CSS = `
+  * { scrollbar-width: none !important; }
+  ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+`;
+
 const ALLOWED_PERMISSIONS = new Set([
   'pointerLock',
   'keyboardLock',
@@ -264,6 +269,15 @@ function createWindow() {
 
   attachNavigationGuards(mainWindow.webContents);
   handleShortcuts(mainWindow);
+
+  // No scrollbars on Xbox pages (scrolling with wheel / pad / drag still works).
+  mainWindow.webContents.on('dom-ready', () => {
+    if (cfg.hideScrollbars && lib.isTrustedUrl(mainWindow.webContents.getURL())) {
+      mainWindow.webContents
+        .insertCSS(HIDE_SCROLLBARS_CSS, { cssOrigin: 'user' })
+        .catch(() => {});
+    }
+  });
 
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     console.warn(`[xbox-play] renderer gone (${details.reason}), reloading`);

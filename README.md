@@ -92,12 +92,14 @@ Plik `~/.config/xbox-play/config.json` (tworzony przy pierwszym starcie):
   "autoUpdateBetterXcloud": true,
   "userAgent": "edge-windows",
   "vaapi": false,
+  "hideScrollbars": true,
   "betterXcloudDefaults": {
     "mkb.enabled": true,
     "stream.video.resolution": "1080p-hq",
     "xhome.video.resolution": "1080p-hq",
     "block.tracking": true,
-    "ui.feedbackDialog.disabled": true
+    "ui.feedbackDialog.disabled": true,
+    "ui.hideScrollbar": true
   }
 }
 ```

@@ -90,6 +90,8 @@ const DEFAULT_CONFIG = {
   // Hardware video decoding via VA-API (same as --vaapi). Off by default: software
   // decoding of 1080p60 H.264 is cheap and usually has the lowest latency.
   vaapi: false,
+  // Hide scrollbars on Xbox pages (scrolling itself still works).
+  hideScrollbars: true,
   // Better xCloud settings applied once, only if you have not set them yourself.
   betterXcloudDefaults: {
     'mkb.enabled': true,
@@ -97,6 +99,7 @@ const DEFAULT_CONFIG = {
     'xhome.video.resolution': '1080p-hq',
     'block.tracking': true,
     'ui.feedbackDialog.disabled': true,
+    'ui.hideScrollbar': true,
   },
 };
 

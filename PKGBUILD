@@ -2,7 +2,7 @@
 # Build & install from a clone of this repo:  makepkg -si
 
 pkgname=xbox-play
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="Xbox Remote Play / Cloud Gaming for Wayland (Hyprland) with Better xCloud, mouse & keyboard support"
 arch=('any')
