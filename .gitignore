@@ -1,0 +1,8 @@
+# makepkg output
+/src/
+/pkg/
+*.pkg.tar*
+*.log
+# downloaded during makepkg
+/better-xcloud.user.js
+node_modules/

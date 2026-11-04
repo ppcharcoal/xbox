@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=Xbox Play
+GenericName=Xbox Remote Play
+Comment=Xbox Remote Play i Cloud Gaming z Better xCloud
+Exec=xbox-play %U
+Icon=xbox-play
+Terminal=false
+Categories=Game;
+Keywords=xbox;remote;play;xcloud;cloud;gaming;
+StartupWMClass=xbox-play
+Actions=remote-play;fullscreen;
+
+[Desktop Action remote-play]
+Name=Remote Play (konsola)
+Exec=xbox-play --remote-play
+
+[Desktop Action fullscreen]
+Name=Pełny ekran
+Exec=xbox-play --fullscreen

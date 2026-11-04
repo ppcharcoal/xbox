@@ -1,0 +1,289 @@
+'use strict';
+
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  ipcMain,
+  net,
+  powerSaveBlocker,
+  session,
+  shell,
+} = require('electron');
+const fs = require('fs');
+const path = require('path');
+const lib = require('./lib');
+
+const APP_ID = 'xbox-play';
+app.setName(APP_ID);
+if (typeof app.setDesktopName === 'function') app.setDesktopName(`${APP_ID}.desktop`);
+
+const BX_DOWNLOAD_URL =
+  'https://github.com/redphx/better-xcloud/releases/latest/download/better-xcloud.user.js';
+const BUNDLED_BX = path.join(__dirname, 'better-xcloud.user.js');
+const USER_DIR = app.getPath('userData'); // ~/.config/xbox-play
+const CACHED_BX = path.join(USER_DIR, 'better-xcloud.user.js');
+const CONFIG_PATH = path.join(USER_DIR, 'config.json');
+
+// ---------- config ----------
+
+function loadConfig() {
+  let user = null;
+  try {
+    user = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      try {
+        fs.mkdirSync(USER_DIR, { recursive: true });
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(lib.DEFAULT_CONFIG, null, 2) + '\n');
+      } catch {}
+    } else {
+      console.warn(`[xbox-play] Cannot read ${CONFIG_PATH}: ${e.message} (using defaults)`);
+    }
+  }
+  return { ...lib.mergeConfig(user), ...lib.parseArgs(process.argv.slice(1)) };
+}
+
+const cfg = loadConfig();
+
+// ---------- Chromium switches (must be set before "ready") ----------
+
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+if (cfg.vaapi) {
+  app.commandLine.appendSwitch(
+    'enable-features',
+    [
+      'AcceleratedVideoDecodeLinuxGL',
+      'AcceleratedVideoDecodeLinuxZeroCopyGL',
+      'VaapiVideoDecoder',
+      'VaapiIgnoreDriverChecks',
+    ].join(',')
+  );
+}
+
+// ---------- single instance ----------
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
+let mainWindow = null;
+
+app.on('second-instance', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
+// ---------- Better xCloud ----------
+
+function readScript(file) {
+  try {
+    return lib.parseUserscript(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+let betterXcloud = lib.newest(readScript(CACHED_BX), readScript(BUNDLED_BX));
+
+async function updateBetterXcloud() {
+  try {
+    const res = await net.fetch(BX_DOWNLOAD_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const latest = lib.parseUserscript(await res.text());
+    if (!latest) throw new Error('downloaded file is not Better xCloud');
+    if (betterXcloud && lib.compareVersions(latest.version, betterXcloud.version) <= 0) return false;
+    fs.mkdirSync(USER_DIR, { recursive: true });
+    const tmp = `${CACHED_BX}.tmp`;
+    fs.writeFileSync(tmp, latest.src);
+    fs.renameSync(tmp, CACHED_BX);
+    console.log(`[xbox-play] Better xCloud ${betterXcloud?.version ?? '-'} -> ${latest.version}`);
+    betterXcloud = latest;
+    return true;
+  } catch (e) {
+    console.warn(`[xbox-play] Better xCloud update failed: ${e.message}`);
+    return false;
+  }
+}
+
+// The preload asks for the script synchronously so it can run before any page script.
+ipcMain.on('bx:get', (event, href) => {
+  const ok = cfg.betterXcloud && betterXcloud && lib.isBetterXcloudPage(String(href));
+  event.returnValue = ok ? { src: betterXcloud.src, defaults: cfg.betterXcloudDefaults } : null;
+});
+
+// ---------- window ----------
+
+const ALLOWED_PERMISSIONS = new Set([
+  'pointerLock',
+  'keyboardLock',
+  'fullscreen',
+  'media', // microphone for party chat; camera is refused below
+  'clipboard-sanitized-write',
+]);
+
+function setupSession(ses, userAgent) {
+  ses.setUserAgent(userAgent);
+
+  ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+    const url = details.requestingUrl || wc.getURL();
+    if (!ALLOWED_PERMISSIONS.has(permission) || !lib.isTrustedUrl(url)) return callback(false);
+    if (permission === 'media') {
+      const types = details.mediaTypes || [];
+      return callback(types.length > 0 && types.every((t) => t === 'audio'));
+    }
+    callback(true);
+  });
+
+  ses.setPermissionCheckHandler((wc, permission, origin) => {
+    return ALLOWED_PERMISSIONS.has(permission) && lib.isTrustedUrl(origin);
+  });
+}
+
+function openExternal(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'https:' || u.protocol === 'http:') shell.openExternal(url);
+  } catch {}
+}
+
+function attachNavigationGuards(wc) {
+  wc.on('will-navigate', (event, url) => {
+    if (!lib.isTrustedUrl(url)) {
+      event.preventDefault();
+      openExternal(url);
+    }
+  });
+
+  wc.setWindowOpenHandler(({ url }) => {
+    if (lib.isTrustedUrl(url)) {
+      // Microsoft sign-in popups stay inside the app (same session, same preload).
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          parent: mainWindow,
+          autoHideMenuBar: true,
+          backgroundColor: '#101010',
+          webPreferences: webPreferences(),
+        },
+      };
+    }
+    openExternal(url);
+    return { action: 'deny' };
+  });
+
+  wc.on('did-create-window', (child) => attachNavigationGuards(child.webContents));
+}
+
+function webPreferences() {
+  return {
+    partition: 'persist:xbox',
+    preload: path.join(__dirname, 'preload.js'),
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+    backgroundThrottling: false,
+    spellcheck: false,
+  };
+}
+
+let sleepBlocker = null;
+function blockSleep(on) {
+  if (on && sleepBlocker === null) {
+    sleepBlocker = powerSaveBlocker.start('prevent-display-sleep');
+  } else if (!on && sleepBlocker !== null) {
+    powerSaveBlocker.stop(sleepBlocker);
+    sleepBlocker = null;
+  }
+}
+
+function handleShortcuts(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const ctrl = input.control || input.meta;
+    const key = input.key;
+    const wc = win.webContents;
+    const nav = wc.navigationHistory;
+    let handled = true;
+
+    if (key === 'F11') win.setFullScreen(!win.isFullScreen());
+    else if (key === 'F5' || (ctrl && !input.shift && key.toLowerCase() === 'r')) wc.reload();
+    else if (ctrl && input.shift && key.toLowerCase() === 'r') wc.reloadIgnoringCache();
+    else if (key === 'F12' || (ctrl && input.shift && key.toLowerCase() === 'i')) wc.toggleDevTools();
+    else if (ctrl && key.toLowerCase() === 'q') app.quit();
+    else if (input.alt && key === 'ArrowLeft' && nav?.canGoBack()) nav.goBack();
+    else if (input.alt && key === 'ArrowRight' && nav?.canGoForward()) nav.goForward();
+    else if (ctrl && input.shift && key.toLowerCase() === 'u') {
+      updateBetterXcloud().then(() => wc.reload());
+    } else handled = false;
+
+    if (handled) event.preventDefault();
+  });
+}
+
+function createWindow() {
+  const userAgent =
+    cfg.userAgent === 'edge-windows'
+      ? lib.edgeUserAgent(process.versions.chrome)
+      : cfg.userAgent === 'default'
+        ? session.defaultSession.getUserAgent().replace(/\s*Electron\/\S+/, '').replace(/\s*xbox-play\/\S+/, '')
+        : cfg.userAgent;
+
+  setupSession(session.fromPartition('persist:xbox'), userAgent);
+
+  mainWindow = new BrowserWindow({
+    title: 'Xbox Play',
+    width: 1600,
+    height: 900,
+    minWidth: 800,
+    minHeight: 450,
+    backgroundColor: '#101010',
+    autoHideMenuBar: true,
+    fullscreen: cfg.fullscreen,
+    show: false,
+    webPreferences: webPreferences(),
+  });
+
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('focus', () => blockSleep(true));
+  mainWindow.on('blur', () => blockSleep(false));
+  mainWindow.on('closed', () => {
+    blockSleep(false);
+    mainWindow = null;
+  });
+
+  // Keep the window title stable so Hyprland rules can match it.
+  mainWindow.on('page-title-updated', (e) => e.preventDefault());
+
+  attachNavigationGuards(mainWindow.webContents);
+  handleShortcuts(mainWindow);
+
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.warn(`[xbox-play] renderer gone (${details.reason}), reloading`);
+    if (details.reason !== 'clean-exit') setTimeout(() => mainWindow?.reload(), 1500);
+  });
+
+  mainWindow.loadURL(cfg.startUrl, { userAgent });
+}
+
+Menu.setApplicationMenu(null);
+
+app.whenReady().then(() => {
+  const hadScript = Boolean(betterXcloud);
+  createWindow();
+  if (cfg.betterXcloud && (cfg.autoUpdateBetterXcloud || !hadScript)) {
+    // With no local copy at all, download it and reload so it is active right away.
+    updateBetterXcloud().then((updated) => {
+      if (updated && !hadScript) mainWindow?.reload();
+    });
+  }
+});
+
+app.on('window-all-closed', () => app.quit());
