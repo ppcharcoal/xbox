@@ -135,11 +135,40 @@ async function updateBetterXcloud() {
   }
 }
 
-// The preload asks for the script synchronously so it can run before any page script.
+// Better xCloud with the small patches that let the Xbox button be held (cached per version).
+let patchedBx = null;
+function getPatchedBetterXcloud() {
+  if (!betterXcloud) return null;
+  if (!patchedBx || patchedBx.version !== betterXcloud.version) {
+    const { src, applied } = lib.patchBetterXcloud(betterXcloud.src);
+    patchedBx = { version: betterXcloud.version, src };
+    console.log(`[xbox-play] Better xCloud ${betterXcloud.version}, patches: ${applied.join(', ') || 'none'}`);
+  }
+  return patchedBx.src;
+}
+
+// Our own in-page input layer (Xbox button, mouse & keyboard -> pad).
+const PAGE_INPUT_JS = fs.readFileSync(path.join(__dirname, 'page-input.js'), 'utf8');
+function pagePrelude() {
+  const pageCfg = {
+    mapper: cfg.mapper,
+    mouseSensitivity: cfg.mouseSensitivity,
+    keyMapping: cfg.mapper ? lib.buildKeyMapping(cfg.keyMapping) : {},
+  };
+  return `window.__xboxPlayConfig = ${JSON.stringify(pageCfg)};\n${PAGE_INPUT_JS}\n`;
+}
+
+// The preload asks for the scripts synchronously so they run before any page script.
 ipcMain.on('bx:get', (event, href) => {
   const ok = cfg.betterXcloud && betterXcloud && lib.isBetterXcloudPage(String(href));
   event.returnValue = ok
-    ? { src: betterXcloud.src, defaults: cfg.betterXcloudDefaults, prelude: lib.HOME_BUTTON_OVERRIDE_JS }
+    ? {
+        src: getPatchedBetterXcloud(),
+        defaults: cfg.betterXcloudDefaults,
+        // Better xCloud's own mouse & keyboard would fight with ours (and does not work in Remote Play).
+        forced: cfg.mapper ? { 'mkb.enabled': false } : {},
+        prelude: pagePrelude(),
+      }
     : null;
 });
 
@@ -253,33 +282,14 @@ function openGamepadTester() {
 
 // ---------- Xbox (guide) button ----------
 // Presses come from F9 and from the pad itself (read from /dev/input, so it works
-// even when the browser does not see the button). They are fed into the page as
-// button 16 of the pad, which Better xCloud turns into the Xbox button on the console.
-
-const MIN_HOLD_MS = 120; // the page polls the pad; very short taps would be missed
-let homeDownAt = 0;
-let homeReleaseTimer = null;
+// even when the browser does not see the button). page-input.js turns them into
+// a tap or a real hold on the console.
 
 function setXboxButton(pressed) {
   const wc = mainWindow?.webContents;
   if (!wc || wc.isDestroyed()) return;
-  clearTimeout(homeReleaseTimer);
-  if (pressed) {
-    homeDownAt = Date.now();
-    wc.executeJavaScript(`window.__xboxPlayHome ? window.__xboxPlayHome(true) : null`)
-      .then((hasPad) => {
-        // No real pad in the page (e.g. keyboard only): tap Xbox directly on the stream.
-        if (hasPad === false) return wc.executeJavaScript(lib.pressXboxButtonScript(0));
-      })
-      .catch(() => {});
-  } else {
-    const wait = Math.max(0, MIN_HOLD_MS - (Date.now() - homeDownAt));
-    homeReleaseTimer = setTimeout(() => {
-      if (!wc.isDestroyed()) {
-        wc.executeJavaScript(`window.__xboxPlayHome && window.__xboxPlayHome(false)`).catch(() => {});
-      }
-    }, wait);
-  }
+  wc.executeJavaScript(`window.__xboxPlayHome && window.__xboxPlayHome(${pressed ? 'true' : 'false'})`)
+    .catch(() => {});
 }
 
 const guideWatchers = new Map(); // /dev/input/eventN -> stream

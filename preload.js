@@ -1,7 +1,8 @@
 'use strict';
-// Runs before any page script. On xbox.com/*/play pages it injects Better xCloud
-// into the page (main world) the same way a userscript manager does with
-// "@run-at document-start".
+// Runs before any page script. On xbox.com/*/play pages it injects, into the page
+// itself (main world) and before the page's own scripts:
+//   1. our input layer (Xbox button, mouse & keyboard -> pad), see page-input.js
+//   2. Better xCloud, the way a userscript manager does with "@run-at document-start".
 
 const { ipcRenderer, webFrame } = require('electron');
 
@@ -12,21 +13,27 @@ try {
   console.error('[xbox-play] could not get Better xCloud:', e);
 }
 
+function run(code, name) {
+  webFrame
+    .executeJavaScript(`${code}\n;void 0;\n//# sourceURL=${name}\n`)
+    .catch((e) => console.error(`[xbox-play] ${name} failed:`, e));
+}
+
 if (payload && payload.src) {
-  // Apply our recommended Better xCloud settings once, without touching
-  // anything the user has already changed in its settings dialog.
-  const seed =
-    '(function (s) { try {' +
-    ' var k = "BetterXcloud", c = JSON.parse(localStorage.getItem(k) || "{}"), d = false;' +
-    ' for (var p in s) { if (!(p in c)) { c[p] = s[p]; d = true; } }' +
+  // Better xCloud settings: `defaults` only fill in what the user has not set,
+  // `forced` are always applied.
+  const settings =
+    '(function (defaults, forced) { try {' +
+    ' var k = "BetterXcloud", c = JSON.parse(localStorage.getItem(k) || "{}"), d = false, p;' +
+    ' for (p in defaults) { if (!(p in c)) { c[p] = defaults[p]; d = true; } }' +
+    ' for (p in forced) { if (c[p] !== forced[p]) { c[p] = forced[p]; d = true; } }' +
     ' if (d) localStorage.setItem(k, JSON.stringify(c));' +
     ' } catch (e) {} })(' +
     JSON.stringify(payload.defaults || {}) +
-    ');\n';
+    ', ' +
+    JSON.stringify(payload.forced || {}) +
+    ');';
 
-  webFrame
-    .executeJavaScript(
-      seed + (payload.prelude || '') + payload.src + '\n;void 0;\n//# sourceURL=better-xcloud.user.js\n'
-    )
-    .catch((e) => console.error('[xbox-play] Better xCloud failed:', e));
+  if (payload.prelude) run(payload.prelude, 'xbox-play-input.js');
+  run(settings + '\n' + payload.src, 'better-xcloud.user.js');
 }

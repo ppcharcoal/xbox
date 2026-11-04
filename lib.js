@@ -96,9 +96,16 @@ const DEFAULT_CONFIG = {
   vaapi: false,
   // Hide scrollbars on Xbox pages (scrolling itself still works).
   hideScrollbars: true,
+  // Mouse & keyboard -> pad mapper (toggle with F8).
+  mapper: true,
+  mouseSensitivity: 1,
+  // Changes to the default key mapping, e.g. { "KeyG": "Y", "KeyE": "" } ("" removes a key).
+  // Targets: A B X Y LB RB LT RT View Menu L3 R3 Up Down Left Right Xbox
+  //          LS_Up LS_Down LS_Left LS_Right RS_Up RS_Down RS_Left RS_Right
+  // Keys use KeyboardEvent.code names; mouse buttons are Mouse0 (left), Mouse1 (middle), Mouse2 (right).
+  keyMapping: {},
   // Better xCloud settings applied once, only if you have not set them yourself.
   betterXcloudDefaults: {
-    'mkb.enabled': true,
     'stream.video.resolution': '1080p-hq',
     'xhome.video.resolution': '1080p-hq',
     'block.tracking': true,
@@ -107,18 +114,75 @@ const DEFAULT_CONFIG = {
   },
 };
 
+const DEFAULT_KEY_MAPPING = {
+  KeyW: 'LS_Up', KeyS: 'LS_Down', KeyA: 'LS_Left', KeyD: 'LS_Right',
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+  Digit1: 'Up', Digit2: 'Down', Digit3: 'Left', Digit4: 'Right',
+  Space: 'A', KeyE: 'A', KeyC: 'B', Backspace: 'B', KeyR: 'X', KeyV: 'Y',
+  KeyQ: 'LB', KeyF: 'RB', Mouse2: 'LT', Mouse0: 'RT',
+  ShiftLeft: 'L3', KeyX: 'L3', KeyZ: 'R3', Mouse1: 'R3',
+  Tab: 'View', Enter: 'Menu', Backquote: 'Xbox',
+  KeyI: 'RS_Up', KeyK: 'RS_Down', KeyJ: 'RS_Left', KeyL: 'RS_Right',
+};
+
+const MAPPING_TARGETS = new Set([
+  'A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'L3', 'R3',
+  'Up', 'Down', 'Left', 'Right', 'Xbox',
+  'LS_Up', 'LS_Down', 'LS_Left', 'LS_Right', 'RS_Up', 'RS_Down', 'RS_Left', 'RS_Right',
+]);
+
+function buildKeyMapping(changes) {
+  const out = { ...DEFAULT_KEY_MAPPING };
+  if (changes && typeof changes === 'object') {
+    for (const [code, target] of Object.entries(changes)) {
+      if (target === '' || target === null) delete out[code];
+      else if (MAPPING_TARGETS.has(target)) out[code] = target;
+    }
+  }
+  return out;
+}
+
 function mergeConfig(user) {
-  const cfg = { ...DEFAULT_CONFIG, betterXcloudDefaults: { ...DEFAULT_CONFIG.betterXcloudDefaults } };
+  const cfg = {
+    ...DEFAULT_CONFIG,
+    keyMapping: {},
+    betterXcloudDefaults: { ...DEFAULT_CONFIG.betterXcloudDefaults },
+  };
   if (!user || typeof user !== 'object') return cfg;
   for (const [k, v] of Object.entries(user)) {
     if (!(k in DEFAULT_CONFIG)) continue;
-    if (k === 'betterXcloudDefaults') {
-      if (v && typeof v === 'object') Object.assign(cfg.betterXcloudDefaults, v);
+    if (k === 'betterXcloudDefaults' || k === 'keyMapping') {
+      if (v && typeof v === 'object') Object.assign(cfg[k], v);
     } else if (typeof v === typeof DEFAULT_CONFIG[k]) {
       cfg[k] = v;
     }
   }
   return cfg;
+}
+
+// Small edits to Better xCloud's gamepad polling so the Xbox button can be held:
+// expose the input sink, and skip Better xCloud's own tap after a long hold.
+const BX_PATCHES = [
+  {
+    name: 'expose-input-sink',
+    find: 'var currentGamepad=$gamepadVar$,btnHome=currentGamepad.buttons[16];',
+    replace: 'window.__xpSink=self.inputSink;var currentGamepad=$gamepadVar$,btnHome=currentGamepad.buttons[16];',
+  },
+  {
+    name: 'no-tap-after-long-hold',
+    find: 'info.shortcutPressed===0)',
+    replace: 'info.shortcutPressed===0&&!window.__xpLongHold)',
+  },
+];
+
+function patchBetterXcloud(src) {
+  const applied = [];
+  for (const p of BX_PATCHES) {
+    if (src.split(p.find).length !== 2) continue; // missing or ambiguous: leave Better xCloud as it is
+    src = src.replace(p.find, () => p.replace);
+    applied.push(p.name);
+  }
+  return { src, applied };
 }
 
 function parseArgs(argv) {
@@ -184,49 +248,6 @@ function chooseStartUrl(cfg, state) {
   return consolesUrl(last && last.locale);
 }
 
-// ---------- Xbox (guide) button ----------
-
-// Injected into the page before Better xCloud. Lets the app press the Xbox
-// button on the real pad as the page sees it (Gamepad API button 16), so it
-// goes through Better xCloud's own Xbox-button handling. Also makes sure every
-// pad reports a button 16 even if the driver did not map one.
-// window.__xboxPlayHome(pressed) returns true if a real pad is connected.
-const HOME_BUTTON_OVERRIDE_JS = `(function () {
-  if (window.__xboxPlayHome || !window.Gamepad) return;
-  var proto = Gamepad.prototype;
-  var bDesc = Object.getOwnPropertyDescriptor(proto, 'buttons');
-  var tDesc = Object.getOwnPropertyDescriptor(proto, 'timestamp');
-  if (!bDesc || !bDesc.get || !tDesc || !tDesc.get) return;
-  var pressed = false, changedAt = 0;
-  var RELEASED = { pressed: false, touched: false, value: 0 };
-  var PRESSED = { pressed: true, touched: true, value: 1 };
-  Object.defineProperty(proto, 'buttons', {
-    configurable: true, enumerable: bDesc.enumerable,
-    get: function () {
-      var b = bDesc.get.call(this);
-      if (!pressed && b.length > 16) return b;
-      var out = Array.prototype.slice.call(b);
-      while (out.length < 17) out.push(RELEASED);
-      if (pressed) out[16] = PRESSED;
-      return out;
-    }
-  });
-  Object.defineProperty(proto, 'timestamp', {
-    configurable: true, enumerable: tDesc.enumerable,
-    get: function () { return Math.max(tDesc.get.call(this), changedAt); }
-  });
-  Object.defineProperty(window, '__xboxPlayHome', {
-    value: function (p) {
-      p = !!p;
-      if (p !== pressed) { pressed = p; changedAt = performance.now(); }
-      var pads = navigator.getGamepads ? navigator.getGamepads() : [];
-      for (var i = 0; i < pads.length; i++) if (pads[i] instanceof Gamepad) return true;
-      return false;
-    }
-  });
-})();
-`;
-
 // ---------- evdev (reading the pad's Xbox button straight from Linux) ----------
 
 const EV_KEY = 1;
@@ -273,26 +294,6 @@ function parseInputEvents(buf) {
   return { events, rest: buf.subarray(off) };
 }
 
-// Page script that taps the Xbox (Nexus/guide) button on the active stream,
-// through the input channel Better xCloud exposes. Returns "ok" or "no-stream".
-function pressXboxButtonScript(gamepadIndex = 0) {
-  return `(function () {
-  var ic = window.BX_EXPOSED && window.BX_EXPOSED.inputChannel;
-  if (!ic || typeof ic.sendGamepadInput !== 'function') return 'no-stream';
-  function state(nexus) {
-    return { GamepadIndex: ${Number(gamepadIndex) | 0}, A: 0, B: 0, X: 0, Y: 0,
-      LeftShoulder: 0, RightShoulder: 0, LeftTrigger: 0, RightTrigger: 0,
-      View: 0, Menu: 0, LeftThumb: 0, RightThumb: 0,
-      DPadUp: 0, DPadDown: 0, DPadLeft: 0, DPadRight: 0, Nexus: nexus,
-      LeftThumbXAxis: 0, LeftThumbYAxis: 0, RightThumbXAxis: 0, RightThumbYAxis: 0,
-      PhysicalPhysicality: 0, VirtualPhysicality: 0, Dirty: true, Virtual: false };
-  }
-  ic.sendGamepadInput(performance.now(), [state(1)]);
-  setTimeout(function () { ic.sendGamepadInput(performance.now(), [state(0)]); }, 120);
-  return 'ok';
-})()`;
-}
-
 // Small self-contained page that shows what the browser sees from each pad.
 const GAMEPAD_TESTER_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <title>Test pada</title><style>
@@ -324,18 +325,19 @@ draw();
 </script></body></html>`;
 
 module.exports = {
+  DEFAULT_KEY_MAPPING,
+  buildKeyMapping,
+  patchBetterXcloud,
   classifyXboxUrl,
   consolesUrl,
   launchUrl,
   chooseStartUrl,
-  HOME_BUTTON_OVERRIDE_JS,
   EV_KEY,
   BTN_MODE,
   INPUT_EVENT_SIZE,
   keyBitSet,
   findGuideButtonDevices,
   parseInputEvents,
-  pressXboxButtonScript,
   GAMEPAD_TESTER_HTML,
   isTrustedUrl,
   isBetterXcloudPage,

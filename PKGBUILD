@@ -2,7 +2,7 @@
 # Build & install from a clone of this repo:  makepkg -si
 
 pkgname=xbox-play
-pkgver=1.1.0
+pkgver=1.2.0
 pkgrel=1
 pkgdesc="Xbox Remote Play for Wayland (Hyprland) with Better xCloud: auto-connect, Xbox button, mouse & keyboard mapping"
 arch=('any')
@@ -18,6 +18,7 @@ source=(
   'main.js'
   'preload.js'
   'lib.js'
+  'page-input.js'
   'package.json'
   'xbox-play.sh'
   'xbox-play.desktop'
@@ -26,7 +27,7 @@ source=(
   # Bundled copy only; the app downloads newer releases itself at runtime.
   'better-xcloud.user.js::https://github.com/redphx/better-xcloud/releases/latest/download/better-xcloud.user.js'
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 check() {
   head -n 3 better-xcloud.user.js | grep -q '@name *Better xCloud' \
@@ -35,7 +36,7 @@ check() {
 
 package() {
   local app="$pkgdir/usr/lib/$pkgname"
-  install -Dm644 -t "$app" main.js preload.js lib.js package.json better-xcloud.user.js
+  install -Dm644 -t "$app" main.js preload.js lib.js page-input.js package.json better-xcloud.user.js
   install -Dm755 xbox-play.sh "$pkgdir/usr/bin/xbox-play"
   install -Dm644 xbox-play.desktop "$pkgdir/usr/share/applications/xbox-play.desktop"
   install -Dm644 xbox-play.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/xbox-play.svg"

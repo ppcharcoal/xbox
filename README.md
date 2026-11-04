@@ -6,8 +6,8 @@ Xbox **Remote Play** (gra z własnej konsoli) na Linuksie w osobnym oknie, dopra
 
 - 🎮 tylko Remote Play: start od razu na Twojej konsoli, bez strony Cloud Gaming
 - 🔁 automatyczne łączenie z ostatnio używaną konsolą
-- 🕹️ pad Xbox (USB / Bluetooth / adapter), **łącznie z przyciskiem Xbox**
-- ⌨️ **mysz i klawiatura** zamieniane na pada (mapowanie do edycji)
+- 🕹️ pad Xbox (USB / Bluetooth / adapter), **łącznie z przyciskiem Xbox** (także przytrzymaniem)
+- ⌨️ **mysz i klawiatura** zamieniane na pada przez wbudowany mapper (F8)
 - 📺 1080p (HQ), user agent Edge (najlepsza jakość od Microsoftu)
 - 🪟 natywny Wayland, pełny ekran, ekran nie gaśnie podczas grania (działa z `hypridle`)
 - 🔄 Better xCloud aktualizuje się sam przy starcie
@@ -44,26 +44,46 @@ Listę konsol otworzysz też w każdej chwili przez **Ctrl+Shift+C** albo `xbox-
 ## Przycisk Xbox
 
 - **Przycisk Xbox na padzie** działa: aplikacja czyta go bezpośrednio z pada (`/dev/input`),
-  więc nie zależy od tego, czy przeglądarka go widzi. Krótkie naciśnięcie otwiera przewodnik
-  na konsoli.
-- **F9** robi to samo z klawiatury (przytrzymanie = przytrzymanie przycisku Xbox).
-- W trybie myszy i klawiatury przycisk Xbox jest też pod klawiszem **`** (pod Esc).
+  więc nie zależy od tego, czy przeglądarka go widzi.
+- **Krótkie naciśnięcie** otwiera przewodnik, **przytrzymanie** (dłużej niż pół sekundy) jest
+  przekazywane do konsoli jako prawdziwe przytrzymanie (np. menu zasilania).
+- **F9** robi to samo z klawiatury, a w trybie myszy i klawiatury także klawisz **`** (pod Esc).
 - **Ctrl+Shift+G** otwiera test pada (przycisk Xbox to nr 16).
 
 ## Mysz i klawiatura
 
-Remote Play od Microsoftu nie przyjmuje myszy i klawiatury, więc aplikacja zamienia je na pada
-(mapper z Better xCloud):
+Remote Play od Microsoftu nie przyjmuje myszy i klawiatury, więc aplikacja ma własny mapper,
+który zamienia je na pada (działa razem z prawdziwym padem albo zamiast niego):
 
-1. W trakcie gry naciśnij **F8** i kliknij w obraz, żeby złapać kursor.
-2. Mysz = prawa gałka, lewy/prawy przycisk myszy = RT/LT, WASD = lewa gałka, Spacja = A,
-   Enter = Menu, Tab = View, **`** = Xbox (pełna lista i edycja w ustawieniach).
-3. **Przytrzymaj Esc ~1 s**, żeby zwolnić kursor; **F8** wyłącza tryb.
+1. W trakcie gry naciśnij **F8** (pojawi się komunikat u góry ekranu).
+2. **Kliknij w obraz**, żeby złapać kursor: mysz steruje prawą gałką.
+3. **Esc** zwalnia kursor, **F8** wyłącza mapper.
 
-Mapowanie zmienisz w: fioletowy przycisk **Better xCloud** → **Mysz i klawiatura** (presety
-"Standard" i "Shooter" albo własny), tam też czułość myszy.
+| Klawisz | Pad | | Klawisz | Pad |
+|---|---|---|---|---|
+| W A S D | lewa gałka | | mysz | prawa gałka |
+| I J K L | prawa gałka | | ← ↑ → ↓ / 1 2 3 4 | krzyżak |
+| Spacja, E | A | | C, Backspace | B |
+| R | X | | V | Y |
+| Q | LB | | F | RB |
+| prawy przycisk myszy | LT | | lewy przycisk myszy | RT |
+| Shift, X | L3 | | Z, środkowy przycisk | R3 |
+| Tab | View | | Enter | Menu |
+| **`** | Xbox | | | |
 
-> Better xCloud ostrzega, że celowanie myszą w grach online może być traktowane jak oszukiwanie.
+Mapowanie i czułość myszy zmienisz w `~/.config/xbox-play/config.json`, np.:
+
+```json
+"mouseSensitivity": 1.5,
+"keyMapping": { "KeyG": "Y", "KeyE": "" }
+```
+
+Klawisze to nazwy `KeyboardEvent.code` (`KeyG`, `Digit5`, `ShiftLeft`…), przyciski myszy to
+`Mouse0`/`Mouse1`/`Mouse2`, a `""` usuwa klawisz z mapowania. Cele: `A B X Y LB RB LT RT View
+Menu L3 R3 Up Down Left Right Xbox` oraz `LS_Up LS_Down LS_Left LS_Right RS_Up RS_Down RS_Left
+RS_Right`.
+
+> Celowanie myszą w grach online może być traktowane jak oszukiwanie.
 
 ## Skróty
 
@@ -118,9 +138,11 @@ mają wartości domyślne):
   "userAgent": "edge-windows",
   "vaapi": false,
   "hideScrollbars": true,
+  "mapper": true,
+  "mouseSensitivity": 1,
+  "keyMapping": {},
   "startUrl": "https://www.xbox.com/play",
   "betterXcloudDefaults": {
-    "mkb.enabled": true,
     "stream.video.resolution": "1080p-hq",
     "xhome.video.resolution": "1080p-hq",
     "block.tracking": true,
