@@ -153,11 +153,22 @@ function cleanName(name) {
   return String(name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
 }
 
+// A key drives one pad control ("A") or several at once (["LB", "RB"]).
+// Mouse wheel "keys": WheelUp, WheelDown, WheelLeft, WheelRight.
+function cleanTargets(value) {
+  const list = (Array.isArray(value) ? value : [value]).filter((t) => MAPPING_TARGETS.has(t));
+  const unique = [...new Set(list)].slice(0, 8);
+  if (!unique.length) return null;
+  return unique.length === 1 ? unique[0] : unique;
+}
+
 function cleanMapping(mapping) {
   const out = {};
   if (!mapping || typeof mapping !== 'object') return out;
-  for (const [code, target] of Object.entries(mapping)) {
-    if (CODE_RE.test(code) && !RESERVED_CODES.has(code) && MAPPING_TARGETS.has(target)) out[code] = target;
+  for (const [code, value] of Object.entries(mapping)) {
+    if (!CODE_RE.test(code) || RESERVED_CODES.has(code)) continue;
+    const targets = cleanTargets(value);
+    if (targets) out[code] = targets;
   }
   return out;
 }

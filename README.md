@@ -76,8 +76,12 @@ który zamienia je na pada (działa razem z prawdziwym padem albo zamiast niego)
 **Ctrl+Shift+M** (albo w menu aplikacji: *Xbox Play → Sterowanie*, albo `xbox-play --editor`)
 otwiera edytor:
 
-- kliknij przycisk na rysunku pada albo na liście i naciśnij klawisz lub przycisk myszy,
-  który ma go zastępować (Esc anuluje); najedź na klawisz i kliknij **×**, żeby go usunąć,
+- kliknij przycisk na rysunku pada albo na liście i naciśnij klawisz, przycisk myszy
+  (także boczne) albo przekręć **kółko myszy** (Esc anuluje); najedź na klawisz i kliknij **×**,
+  żeby go usunąć,
+- **kilka klawiszy na jeden przycisk**: kliknij **+** przy przycisku i dodaj kolejny klawisz,
+- **jeden klawisz na kilka przycisków naraz** (np. LB+RB): przypisz ten sam klawisz do kolejnego
+  przycisku; na klawiszu pojawi się znacznik **+1**,
 - suwak **czułość myszy** i **odwróć oś Y**,
 - **profile**, np. osobny dla każdej gry: *Nowy profil*, *Duplikuj*, *Zmień nazwę*, *Usuń*,
   *Przywróć domyślne*,

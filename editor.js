@@ -33,6 +33,7 @@ const KEY_NAMES = {
   Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', IntlBackslash: '<',
   Insert: 'Insert', Delete: 'Delete', Home: 'Home', End: 'End', PageUp: 'PgUp', PageDown: 'PgDn',
   Mouse0: 'Mysz lewy', Mouse1: 'Mysz środek', Mouse2: 'Mysz prawy', Mouse3: 'Mysz wstecz', Mouse4: 'Mysz dalej',
+  WheelUp: 'Kółko ↑', WheelDown: 'Kółko ↓', WheelLeft: 'Kółko ←', WheelRight: 'Kółko →',
 };
 function keyName(code) {
   if (KEY_NAMES[code]) return KEY_NAMES[code];
@@ -57,8 +58,18 @@ function profile() {
   return data.profiles.find((p) => p.name === data.active) || data.profiles[0];
 }
 
+// A key drives one control ("A") or several at once (["LB", "RB"]).
+function targetsOf(code) {
+  const t = profile().mapping[code];
+  return t ? (Array.isArray(t) ? t : [t]) : [];
+}
+function setTargets(code, targets) {
+  const mapping = profile().mapping;
+  if (!targets.length) delete mapping[code];
+  else mapping[code] = targets.length === 1 ? targets[0] : targets;
+}
 function keysFor(target) {
-  return Object.keys(profile().mapping).filter((code) => profile().mapping[code] === target);
+  return Object.keys(profile().mapping).filter((code) => targetsOf(code).includes(target));
 }
 
 function setStatus(text, kind) {
@@ -111,6 +122,15 @@ function renderSide(el, groups) {
         const cap = document.createElement('span');
         cap.className = 'key';
         cap.textContent = keyName(code);
+        const others = targetsOf(code).filter((t) => t !== target);
+        if (others.length) {
+          cap.classList.add('combo');
+          const more = document.createElement('span');
+          more.className = 'also';
+          more.textContent = `+${others.length}`;
+          cap.title = `${keyName(code)} naciska też: ${others.map((t) => TARGET_NAME[t]).join(', ')}`;
+          cap.append(more);
+        }
         const x = document.createElement('button');
         x.className = 'remove';
         x.type = 'button';
@@ -119,13 +139,24 @@ function renderSide(el, groups) {
         x.setAttribute('aria-label', `Usuń ${keyName(code)} z: ${label}`);
         x.addEventListener('click', (e) => {
           e.stopPropagation();
-          delete profile().mapping[code];
+          setTargets(code, targetsOf(code).filter((t) => t !== target));
           save(`Usunięto ${keyName(code)} z: ${label}.`);
           render();
         });
         cap.append(x);
         keys.append(cap);
       }
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'add';
+      add.textContent = '+';
+      add.title = 'Dodaj klawisz';
+      add.setAttribute('aria-label', `Dodaj klawisz do: ${label}`);
+      add.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startListening(target);
+      });
+      keys.append(add);
       row.append(name, keys);
       row.addEventListener('click', () => startListening(target));
       row.addEventListener('keydown', (e) => {
@@ -181,7 +212,7 @@ function highlight(target, on) {
 // ---------- binding ----------
 function startListening(target) {
   listening = target;
-  setStatus(`Naciśnij klawisz albo przycisk myszy dla: ${TARGET_NAME[target]}. Esc anuluje.`, 'listen');
+  setStatus(`Naciśnij klawisz, przycisk myszy albo przekręć kółko dla: ${TARGET_NAME[target]}. Esc anuluje.`, 'listen');
   $('#cancel-listen').hidden = false;
   render();
 }
@@ -199,11 +230,19 @@ function bind(code) {
     return;
   }
   const target = listening;
-  const mapping = profile().mapping;
-  const previous = mapping[code];
-  mapping[code] = target;
+  const current = targetsOf(code);
+  if (current.includes(target)) {
+    stopListening(`${keyName(code)} już jest przypisany do: ${TARGET_NAME[target]}.`);
+    return;
+  }
+  setTargets(code, [...current, target]);
   let msg = `${keyName(code)} → ${TARGET_NAME[target]}.`;
-  if (previous && previous !== target) msg += ` Wcześniej był przypisany do: ${TARGET_NAME[previous]}.`;
+  if (current.length) {
+    msg += ` Ten klawisz naciska teraz naraz: ${[...current, target].map((t) => TARGET_NAME[t]).join(' + ')}.` +
+      ' Jeśli to pomyłka, usuń go ze starego miejsca (×).';
+  } else {
+    msg += ' Kliknij + przy tym przycisku, żeby dodać kolejny klawisz.';
+  }
   stopListening(msg, 'ok');
   save();
 }
@@ -216,6 +255,16 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape') return stopListening('Anulowano.');
   bind(e.code);
 }, true);
+
+window.addEventListener('wheel', (e) => {
+  if (!listening) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+  const delta = horizontal ? e.deltaX : e.deltaY;
+  if (!delta) return;
+  bind(horizontal ? (delta < 0 ? 'WheelLeft' : 'WheelRight') : (delta < 0 ? 'WheelUp' : 'WheelDown'));
+}, { capture: true, passive: false });
 
 // The click that completes a mouse binding (same press) must not start listening again.
 let swallowClick = false;

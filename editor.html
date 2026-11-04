@@ -73,7 +73,7 @@
   .row:hover, .row.hover { background: var(--panel); border-color: var(--line); }
   .row.listening { border-color: var(--listen); background: rgba(255, 191, 71, 0.08); }
   .row .name { font-size: 14px; }
-  .keys { display: flex; flex-wrap: wrap; gap: 6px; }
+  .keys { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .keys .empty { color: var(--muted); font-size: 13px; }
   .row.listening .keys::after {
     content: "naciśnij…"; color: var(--listen); font-size: 13px; font-weight: 600; align-self: center;
@@ -90,6 +90,14 @@
     border-radius: 4px; background: transparent; color: var(--cap-ink); font-size: 14px; line-height: 14px;
   }
   .key:hover .remove, .key .remove:focus-visible { display: inline-block; }
+  .key.combo { box-shadow: inset 0 -3px 0 var(--cap-edge), 0 0 0 2px var(--bound-edge); }
+  .key .also { font-size: 11px; font-weight: 700; color: #3d5a80; }
+  .add {
+    width: 28px; height: 26px; padding: 0; border-radius: 6px; border: 1px dashed var(--body-edge);
+    background: transparent; color: var(--muted); font-size: 16px; line-height: 1; opacity: 0;
+  }
+  .row:hover .add, .row.listening .add, .add:focus-visible { opacity: 1; }
+  .add:hover { border-style: solid; color: var(--ink); background: var(--body); }
   .key .remove:hover { background: rgba(0, 0, 0, 0.12); }
 
   .pad { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
@@ -208,7 +216,7 @@
       <circle class="part" data-target="Xbox" cx="300" cy="148" r="20"/>
       <text class="glyph small" x="300" y="148">Xbox</text>
     </svg>
-    <p class="hint">Kliknij przycisk na padzie albo na liście, a potem naciśnij klawisz lub przycisk myszy. Mysz zawsze steruje prawą gałką.</p>
+    <p class="hint">Kliknij przycisk na padzie albo na liście, a potem naciśnij klawisz, przycisk myszy albo przekręć kółko. Przycisk może mieć kilka klawiszy (+), a jeden klawisz może naciskać kilka przycisków naraz. Mysz zawsze steruje prawą gałką.</p>
   </section>
 
   <section class="side" id="right"></section>

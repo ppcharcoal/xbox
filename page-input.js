@@ -107,23 +107,36 @@
   // ---------------------------------------------------------------- mapper state
   var mapper = { on: false, held: {}, mouseX: 0, mouseY: 0, mouseTimer: 0, virtualShown: false };
 
+  // A key can drive one control ("A") or several at once (["LB", "RB"]).
+  function targetsOf(code) {
+    var t = MAPPING[code];
+    if (!t) return [];
+    return Array.isArray(t) ? t : [t];
+  }
+
   function mappedButtons() {
     var out = null;
     for (var code in mapper.held) {
-      var idx = BUTTON[MAPPING[code]];
-      if (idx === undefined) continue;
-      if (!out) out = {};
-      out[idx] = true;
+      var targets = targetsOf(code);
+      for (var t = 0; t < targets.length; t++) {
+        var idx = BUTTON[targets[t]];
+        if (idx === undefined) continue;
+        if (!out) out = {};
+        out[idx] = true;
+      }
     }
     return out;
   }
   function mappedAxes() {
     var ax = [0, 0, 0, 0], any = false;
     for (var code in mapper.held) {
-      var s = STICK[MAPPING[code]];
-      if (!s) continue;
-      ax[s[0]] += s[1];
-      any = true;
+      var targets = targetsOf(code);
+      for (var t = 0; t < targets.length; t++) {
+        var s = STICK[targets[t]];
+        if (!s) continue;
+        ax[s[0]] += s[1];
+        any = true;
+      }
     }
     for (var i = 0; i < 4; i++) ax[i] = Math.max(-1, Math.min(1, ax[i]));
     // diagonal on the left stick: keep it on the unit circle
@@ -220,7 +233,7 @@
   // ---------------------------------------------------------------- input events
   function clearHeld() {
     var hadXbox = false;
-    for (var code in mapper.held) if (MAPPING[code] === 'Xbox') hadXbox = true;
+    for (var code in mapper.held) if (targetsOf(code).indexOf('Xbox') >= 0) hadXbox = true;
     mapper.held = {};
     mapper.mouseX = mapper.mouseY = 0;
     if (hadXbox) setHome(false);
@@ -243,9 +256,9 @@
   function swallow(e) { e.preventDefault(); e.stopImmediatePropagation(); }
 
   function press(code, down) {
-    var target = MAPPING[code];
-    if (!target) return false;
-    if (target === 'Xbox') { setHome(down); return true; }
+    var targets = targetsOf(code);
+    if (!targets.length) return false;
+    if (targets.indexOf('Xbox') >= 0) setHome(down);
     if (down) mapper.held[code] = true; else delete mapper.held[code];
     touch();
     return true;
@@ -263,14 +276,14 @@
       if (!e.repeat) setMapper(!mapper.on);
       return;
     }
-    if (!mapper.on || !MAPPING[e.code]) return;
+    if (!mapper.on || !targetsOf(e.code).length) return;
     swallow(e);
     if (!e.repeat) press(e.code, true);
   }, true);
   window.addEventListener('keyup', function (e) {
     if (e.code === 'F9') { swallow(e); setHome(false); return; }
     if (MAPPER_ENABLED && e.code === TOGGLE_KEY) { swallow(e); return; }
-    if (!mapper.on || !MAPPING[e.code]) return;
+    if (!mapper.on || !targetsOf(e.code).length) return;
     swallow(e);
     press(e.code, false);
   }, true);
@@ -295,6 +308,22 @@
     if (document.pointerLockElement) press(mouseCode(e), false);
   }, true);
   window.addEventListener('contextmenu', function (e) { if (mapper.on) e.preventDefault(); }, true);
+
+  // Mouse wheel: each notch is a short press of whatever it is mapped to.
+  var wheelTimers = {};
+  var WHEEL_PRESS_MS = 110;
+  window.addEventListener('wheel', function (e) {
+    if (!mapper.on || !document.pointerLockElement) return;
+    var horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+    var delta = horizontal ? e.deltaX : e.deltaY;
+    if (!delta) return;
+    var code = horizontal ? (delta < 0 ? 'WheelLeft' : 'WheelRight') : (delta < 0 ? 'WheelUp' : 'WheelDown');
+    if (!targetsOf(code).length) return;
+    swallow(e);
+    if (!wheelTimers[code]) press(code, true);
+    clearTimeout(wheelTimers[code]);
+    wheelTimers[code] = setTimeout(function () { wheelTimers[code] = 0; press(code, false); }, WHEEL_PRESS_MS);
+  }, { capture: true, passive: false });
 
   var DEADZONE_COUNTERWEIGHT = 0.2; // small mouse moves still beat the game's stick deadzone
   window.addEventListener('mousemove', function (e) {
