@@ -18,7 +18,7 @@ import sys
 import time
 
 APP = "xbox"
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
@@ -288,6 +288,8 @@ def no_wait_options(known):
     on Wayland a hidden window (another workspace) gets none, and mpv in low-latency mode
     would hang there ("Application not responding" after switching back)."""
     opts = ["--vulkan-swap-mode=mailbox"] if "vulkan-swap-mode" in known else []
+    if "swapchain-depth" in known:  # one frame in flight instead of up to three
+        opts.append("--swapchain-depth=1")
     if "wayland-internal-vsync" in known:       # mpv >= 0.38
         opts.append("--wayland-internal-vsync=no")
     elif "wayland-disable-vsync" in known:      # older mpv

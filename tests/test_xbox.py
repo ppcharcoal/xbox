@@ -174,6 +174,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(x.no_wait_options({"vulkan-swap-mode", "wayland-disable-vsync"}),
                          ["--vulkan-swap-mode=mailbox", "--wayland-disable-vsync=yes"])
         self.assertEqual(x.no_wait_options(set()), [])  # never pass an option mpv does not know
+        self.assertIn("--swapchain-depth=1", x.no_wait_options({"swapchain-depth"}))
 
     def test_detects_options_of_the_installed_mpv(self):
         x._MPV_OPTIONS = None
