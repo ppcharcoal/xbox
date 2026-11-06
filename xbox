@@ -18,7 +18,7 @@ import sys
 import time
 
 APP = "xbox"
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
@@ -268,7 +268,34 @@ def loopback_cmd(source, cfg):
 
 # ----------------------------------------------------------------------------- video
 
-def mpv_cmd(dev, mode, cfg):
+_MPV_OPTIONS = None
+
+
+def mpv_options():
+    """Option names this mpv knows (they change between mpv versions)."""
+    global _MPV_OPTIONS
+    if _MPV_OPTIONS is None:
+        try:
+            out = subprocess.run(["mpv", "--list-options"], capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        _MPV_OPTIONS = set(re.findall(r"^\s*--([\w-]+)", out, re.M))
+    return _MPV_OPTIONS
+
+
+def no_wait_options(known):
+    """Do not let mpv wait for the compositor's frame callbacks / a blocking swapchain:
+    on Wayland a hidden window (another workspace) gets none, and mpv in low-latency mode
+    would hang there ("Application not responding" after switching back)."""
+    opts = ["--vulkan-swap-mode=mailbox"] if "vulkan-swap-mode" in known else []
+    if "wayland-internal-vsync" in known:       # mpv >= 0.38
+        opts.append("--wayland-internal-vsync=no")
+    elif "wayland-disable-vsync" in known:      # older mpv
+        opts.append("--wayland-disable-vsync=yes")
+    return opts
+
+
+def mpv_cmd(dev, mode, cfg, known=None):
     fourcc, width, height, fps = mode
     fps_text = f"{fps:g}"
     lavf = f"video_size={width}x{height},framerate={fps_text},input_format={LAVF_FORMAT[fourcc]},fflags=+nobuffer"
@@ -287,7 +314,7 @@ def mpv_cmd(dev, mode, cfg):
         "--keep-open=no", "--idle=no",
         "--stop-screensaver=yes",
         "--msg-level=all=warn",
-    ]
+    ] + no_wait_options(mpv_options() if known is None else known)
     if cfg["fullscreen"]:
         cmd.append("--fs")
     return cmd + list(cfg["mpv_args"])
@@ -422,6 +449,7 @@ def main(argv=None):
     parser.add_argument("--fullscreen", action="store_true", help="start in fullscreen")
     parser.add_argument("--windowed", action="store_true", help="start in a window")
     parser.add_argument("--device", help="capture device, e.g. /dev/video0")
+    parser.add_argument("--format", help="picture format: MJPG or YUYV (default: automatic)")
     parser.add_argument("--no-audio", action="store_true", help="no sound")
     parser.add_argument("--list", action="store_true", help="show capture devices and modes")
     parser.add_argument("--config", action="store_true", help="create the config file and print its path")
@@ -435,6 +463,8 @@ def main(argv=None):
         cfg["fullscreen"] = False
     if args.device:
         cfg["device"] = args.device
+    if args.format:
+        cfg["format"] = args.format.upper()
     if args.no_audio:
         cfg["audio"] = False
 

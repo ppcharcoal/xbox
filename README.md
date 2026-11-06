@@ -42,6 +42,7 @@ xbox                # otwórz (pełny ekran)
 xbox --windowed     # w oknie
 xbox --toggle       # otwórz / zamknij
 xbox --list         # wykryte karty, ich tryby i źródło dźwięku
+xbox --format MJPG  # wymuś format obrazu (MJPG albo YUYV)
 ```
 
 W oknie: **f** pełny ekran, **Esc** wyjście z pełnego ekranu, **q** zamknij.

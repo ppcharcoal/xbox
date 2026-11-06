@@ -168,8 +168,25 @@ class DeviceTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_no_wait_options_for_each_mpv_version(self):
+        self.assertEqual(x.no_wait_options({"vulkan-swap-mode", "wayland-internal-vsync", "wayland-disable-vsync"}),
+                         ["--vulkan-swap-mode=mailbox", "--wayland-internal-vsync=no"])
+        self.assertEqual(x.no_wait_options({"vulkan-swap-mode", "wayland-disable-vsync"}),
+                         ["--vulkan-swap-mode=mailbox", "--wayland-disable-vsync=yes"])
+        self.assertEqual(x.no_wait_options(set()), [])  # never pass an option mpv does not know
+
+    def test_detects_options_of_the_installed_mpv(self):
+        x._MPV_OPTIONS = None
+        try:
+            known = x.mpv_options()
+            if known:  # mpv installed here
+                self.assertIn("vulkan-swap-mode", known)
+                self.assertIn("profile", known)
+        finally:
+            x._MPV_OPTIONS = None
+
     def test_mpv(self):
-        cmd = x.mpv_cmd("/dev/video0", ("MJPG", 1920, 1080, 60.0), x.merge_config({}))
+        cmd = x.mpv_cmd("/dev/video0", ("MJPG", 1920, 1080, 60.0), x.merge_config({}), known=set())
         self.assertEqual(cmd[:2], ["mpv", "av://v4l2:/dev/video0"])
         self.assertIn("--demuxer-lavf-o=video_size=1920x1080,framerate=60,input_format=mjpeg,fflags=+nobuffer", cmd)
         for opt in ("--profile=low-latency", "--untimed", "--no-audio", "--wayland-app-id=xbox", "--title=Xbox", "--fs"):
