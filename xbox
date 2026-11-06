@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""Xbox: the Xbox on the PC screen, from an HDMI capture card (UVC), with its sound.
+
+Video: mpv with the lowest-latency settings, straight from the card (/dev/videoN).
+Sound: the card's own audio input played on the default output (PipeWire loopback).
+The card and the best mode (1920x1080, highest frame rate) are found automatically.
+"""
+
+import argparse
+import glob
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+APP = "xbox"
+VERSION = "2.0.0"
+
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
+CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+CONFIG_PATH = os.path.join(CONFIG_HOME, APP, "config.json")
+SYSFS = "/sys"  # replaced in tests
+
+DEFAULT_CONFIG = {
+    # /dev/videoN of the capture card; empty = find it automatically
+    "device": "",
+    # wanted picture size; the highest frame rate available at this size is used
+    "width": 1920,
+    "height": 1080,
+    # 0 = highest available
+    "fps": 0,
+    # "" = automatic (highest fps; at equal fps uncompressed YUYV before MJPG), or MJPG / YUYV / NV12
+    "format": "",
+    "fullscreen": True,
+    # play the card's sound on the default output
+    "audio": True,
+    # PipeWire source to play; empty = the capture card's own audio input
+    "audio_source": "",
+    # loopback latency in ms (0 = PipeWire default)
+    "audio_latency_ms": 25,
+    # extra mpv options, e.g. ["--video-rotate=0"]
+    "mpv_args": [],
+}
+
+# V4L2 fourcc -> FFmpeg v4l2 "input_format"
+LAVF_FORMAT = {"MJPG": "mjpeg", "YUYV": "yuyv422", "NV12": "nv12", "YU12": "yuv420p", "RGB3": "rgb24"}
+UNCOMPRESSED = {"YUYV", "NV12", "YU12", "RGB3"}
+
+
+def log(msg):
+    print(f"[{APP}] {msg}", file=sys.stderr, flush=True)
+
+
+def notify(text):
+    log(text)
+    if shutil.which("notify-send"):
+        subprocess.Popen(["notify-send", "-a", "Xbox", "-i", APP, "Xbox", text],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def merge_config(user):
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    if not isinstance(user, dict):
+        return cfg
+    for key, value in user.items():
+        if key not in cfg:
+            continue
+        default = cfg[key]
+        if isinstance(default, bool):
+            cfg[key] = bool(value)
+        elif isinstance(default, int) and isinstance(value, (int, float)) and not isinstance(value, bool):
+            cfg[key] = int(value)
+        elif isinstance(default, str) and isinstance(value, str):
+            cfg[key] = value
+        elif isinstance(default, list) and isinstance(value, list):
+            cfg[key] = [str(v) for v in value]
+    return cfg
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            return merge_config(json.load(f))
+    except FileNotFoundError:
+        return merge_config(None)
+    except (OSError, ValueError) as err:
+        log(f"cannot read {CONFIG_PATH}: {err} (using defaults)")
+        return merge_config(None)
+
+
+# ----------------------------------------------------------------------------- modes
+
+def parse_formats(text):
+    """Modes from `v4l2-ctl --list-formats-ext`: [(fourcc, width, height, fps), ...]."""
+    modes = []
+    fourcc = None
+    size = None
+    for line in (text or "").splitlines():
+        m = re.search(r"\[\d+\]:\s*'(\w{3,4})'", line)
+        if m:
+            fourcc, size = m.group(1).strip(), None
+            continue
+        m = re.search(r"Size:\s*\w+\s+(\d+)x(\d+)", line)
+        if m:
+            size = (int(m.group(1)), int(m.group(2)))
+            continue
+        m = re.search(r"Interval:.*\(([\d.]+)\s*fps\)", line)
+        if m and fourcc and size:
+            modes.append((fourcc, size[0], size[1], round(float(m.group(1)), 3)))
+    return modes
+
+
+def choose_mode(modes, width=1920, height=1080, fps=0, fmt=""):
+    """Best mode: the wanted size (else the largest size that is not bigger), the highest
+    frame rate (or the wanted one), and at equal frame rate uncompressed before MJPG."""
+    usable = [m for m in modes if m[0] in LAVF_FORMAT]
+    if fmt:
+        usable = [m for m in usable if m[0] == fmt.upper()]
+    if not usable:
+        return None
+    exact = [m for m in usable if (m[1], m[2]) == (width, height)]
+    if not exact:
+        smaller = [m for m in usable if m[1] <= width and m[2] <= height] or usable
+        best_area = max(m[1] * m[2] for m in smaller)
+        exact = [m for m in smaller if m[1] * m[2] == best_area]
+    if fps:
+        near = min(exact, key=lambda m: abs(m[3] - fps))
+        exact = [m for m in exact if m[3] == near[3]]
+    top = max(m[3] for m in exact)
+    exact = [m for m in exact if m[3] == top]
+    exact.sort(key=lambda m: (m[0] not in UNCOMPRESSED, m[0]))
+    return exact[0]
+
+
+def list_modes(dev):
+    try:
+        out = subprocess.run(["v4l2-ctl", "--list-formats-ext", "-d", dev],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_formats(out.stdout)
+
+
+# ----------------------------------------------------------------------------- devices
+
+CAPTURE_WORDS = re.compile(r"usb3|video|capture|hdmi|ms21|grabber|cam ?link|elgato|avermedia|ezcap", re.I)
+WEBCAM_WORDS = re.compile(r"webcam|camera|integrated|face ?time|ir cam", re.I)
+
+
+def usb_device_of(sysfs_device):
+    """/sys/devices/.../usb2/2-5/2-5:1.0 -> /sys/devices/.../usb2/2-5 (the USB device itself)."""
+    real = os.path.realpath(sysfs_device)
+    return os.path.dirname(real) if re.search(r"/\d+-[\d.]+:\d+\.\d+$", real) else real
+
+
+def video_devices(sysfs=None):
+    """[{dev, name, usb}] for V4L2 nodes (capture and others; modes decide later)."""
+    sysfs = sysfs or SYSFS
+    out = []
+    for node in sorted(glob.glob(os.path.join(sysfs, "class/video4linux/video*")),
+                       key=lambda p: int(re.sub(r"\D", "", os.path.basename(p)) or 0)):
+        try:
+            with open(os.path.join(node, "name"), encoding="utf-8") as f:
+                name = f.read().strip()
+        except OSError:
+            name = ""
+        out.append({"dev": "/dev/" + os.path.basename(node), "name": name,
+                    "usb": usb_device_of(os.path.join(node, "device"))})
+    return out
+
+
+def score_device(name, modes):
+    """Higher = more likely the HDMI capture card."""
+    score = 0
+    if CAPTURE_WORDS.search(name):
+        score += 10
+    if WEBCAM_WORDS.search(name):
+        score -= 20
+    if any((m[1], m[2]) == (1920, 1080) and m[3] >= 50 for m in modes):
+        score += 5
+    return score
+
+
+def find_capture(cfg, sysfs=None, modes_of=None):
+    """(device dict, modes) of the capture card, or (None, [])."""
+    candidates = []
+    for d in video_devices(sysfs):
+        if cfg["device"] and d["dev"] != cfg["device"]:
+            continue
+        modes = (modes_of or list_modes)(d["dev"])
+        if not modes:  # metadata nodes have no formats
+            continue
+        candidates.append((score_device(d["name"], modes), d, modes))
+    if not candidates:
+        return None, []
+    candidates.sort(key=lambda c: -c[0])
+    _, d, modes = candidates[0]
+    return d, modes
+
+
+# ----------------------------------------------------------------------------- audio
+
+def alsa_card_for(usb_dev, sysfs=None):
+    """ALSA card number of the sound interface on the same USB device as the video."""
+    for card in glob.glob(os.path.join(sysfs or SYSFS, "class/sound/card*")):
+        m = re.search(r"card(\d+)$", card)
+        if m and usb_device_of(os.path.join(card, "device")) == usb_dev:
+            return int(m.group(1))
+    return None
+
+
+def pipewire_source_for_card(card, pw_dump):
+    """node.name of the PipeWire audio source on ALSA card `card` (from `pw-dump` JSON)."""
+    try:
+        objects = json.loads(pw_dump) if isinstance(pw_dump, str) else pw_dump
+    except ValueError:
+        return None
+    for obj in objects or []:
+        props = ((obj.get("info") or {}).get("props") or {}) if isinstance(obj, dict) else {}
+        if props.get("media.class") != "Audio/Source":
+            continue
+        if str(props.get("api.alsa.card", "")) == str(card) and props.get("node.name"):
+            return props["node.name"]
+    return None
+
+
+def find_audio_source(cfg, device, sysfs=None, pw_dump=None):
+    if cfg["audio_source"]:
+        return cfg["audio_source"]
+    card = alsa_card_for(device["usb"], sysfs)
+    if card is None:
+        return None
+    if pw_dump is None:
+        try:
+            pw_dump = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+    return pipewire_source_for_card(card, pw_dump)
+
+
+def loopback_cmd(source, cfg):
+    cmd = ["pw-loopback", "-n", "xbox-audio", "-C", source,
+           "--playback-props", "media.role=Game node.description=Xbox"]
+    if cfg["audio_latency_ms"] > 0:
+        cmd += ["-l", str(cfg["audio_latency_ms"])]
+    return cmd
+
+
+# ----------------------------------------------------------------------------- video
+
+def mpv_cmd(dev, mode, cfg):
+    fourcc, width, height, fps = mode
+    fps_text = f"{fps:g}"
+    lavf = f"video_size={width}x{height},framerate={fps_text},input_format={LAVF_FORMAT[fourcc]},fflags=+nobuffer"
+    cmd = [
+        "mpv", f"av://v4l2:{dev}",
+        "--no-config",                 # predictable: no user scripts or settings in the way
+        "--profile=low-latency",
+        "--untimed", "--cache=no",
+        f"--demuxer-lavf-o={lavf}",
+        "--demuxer-lavf-analyzeduration=0.1",
+        "--no-audio",                  # sound goes through the PipeWire loopback (lower latency)
+        "--hwdec=no",
+        "--interpolation=no",
+        "--title=Xbox", f"--wayland-app-id={APP}",
+        "--osc=no", "--osd-level=1", "--cursor-autohide=1000",
+        "--keep-open=no", "--idle=no",
+        "--stop-screensaver=yes",
+        "--msg-level=all=warn",
+    ]
+    if cfg["fullscreen"]:
+        cmd.append("--fs")
+    return cmd + list(cfg["mpv_args"])
+
+
+# ----------------------------------------------------------------------------- single instance
+
+def running_pid():
+    try:
+        with open(PID_FILE, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            if APP.encode() not in f.read():
+                return None
+    except OSError:
+        return None
+    return pid
+
+
+def write_pid():
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    with open(PID_FILE, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+
+
+def remove_pid():
+    try:
+        if running_pid() == os.getpid():
+            os.remove(PID_FILE)
+    except OSError:
+        pass
+
+
+# ----------------------------------------------------------------------------- run
+
+def stop(proc, timeout=3):
+    if proc and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def missing_tools(cfg):
+    need = ["mpv", "v4l2-ctl"] + (["pw-loopback", "pw-dump"] if cfg["audio"] else [])
+    return [t for t in need if not shutil.which(t)]
+
+
+def run(cfg):
+    missing = missing_tools(cfg)
+    if "mpv" in missing or "v4l2-ctl" in missing:
+        notify(f"Brakuje programów: {', '.join(missing)}. Zainstaluj: sudo pacman -S mpv v4l-utils")
+        return 1
+
+    device, modes = find_capture(cfg)
+    if not device:
+        notify("Nie widzę karty przechwytującej. Podłącz ją do portu USB 3 (nie przez hub).")
+        return 1
+    mode = choose_mode(modes, cfg["width"], cfg["height"], cfg["fps"], cfg["format"])
+    if not mode:
+        notify(f"Karta {device['name']} nie ma obsługiwanego trybu obrazu.")
+        return 1
+    log(f"{device['name']} ({device['dev']}): {mode[0]} {mode[1]}x{mode[2]} @ {mode[3]:g} fps")
+
+    audio = None
+    if cfg["audio"]:
+        if "pw-loopback" in missing or "pw-dump" in missing:
+            log("no PipeWire tools: sound is off")
+        else:
+            source = find_audio_source(cfg, device)
+            if source:
+                log(f"sound: {source}")
+                audio = subprocess.Popen(loopback_cmd(source, cfg), stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL, start_new_session=True)
+            else:
+                log("the card's sound input was not found: sound is off")
+
+    started = time.monotonic()
+    video = subprocess.Popen(mpv_cmd(device["dev"], mode, cfg), stderr=subprocess.PIPE, text=True)
+
+    def on_signal(*_):
+        stop(video)
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGHUP, on_signal)
+
+    _, err = video.communicate()
+    stop(audio)
+    code = video.returncode
+    if code not in (0, None, -signal.SIGTERM, 4) and time.monotonic() - started < 5:
+        detail = (err or "").strip().splitlines()[-1:] or [""]
+        if re.search(r"busy", detail[0], re.I):
+            notify("Karta jest zajęta przez inny program (np. OBS). Zamknij go i spróbuj ponownie.")
+        else:
+            notify(f"Nie udało się otworzyć obrazu z karty. {detail[0]}")
+        return 1
+    return 0
+
+
+def cmd_list(cfg):
+    devices = video_devices()
+    if not devices:
+        print("No video devices.")
+        return 1
+    chosen, _ = find_capture(cfg)
+    for d in devices:
+        modes = list_modes(d["dev"])
+        if not modes:
+            continue
+        mark = "  <- Xbox" if chosen and chosen["dev"] == d["dev"] else ""
+        print(f"{d['dev']}: {d['name']}{mark}")
+        best = choose_mode(modes, cfg["width"], cfg["height"], cfg["fps"], cfg["format"])
+        for m in sorted(set(modes), key=lambda m: (-m[1] * m[2], -m[3], m[0])):
+            if (m[1], m[2]) in ((1920, 1080), (1280, 720), (2560, 1440), (3840, 2160)):
+                print(f"    {m[0]} {m[1]}x{m[2]} @ {m[3]:g} fps{'   (used)' if m == best else ''}")
+    if chosen:
+        source = find_audio_source(cfg, chosen) if shutil.which("pw-dump") else None
+        print(f"sound: {source or 'not found'}")
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog=APP, description="The Xbox from an HDMI capture card, on the PC screen.")
+    parser.add_argument("--toggle", action="store_true", help="close Xbox if it is open, otherwise open it")
+    parser.add_argument("--fullscreen", action="store_true", help="start in fullscreen")
+    parser.add_argument("--windowed", action="store_true", help="start in a window")
+    parser.add_argument("--device", help="capture device, e.g. /dev/video0")
+    parser.add_argument("--no-audio", action="store_true", help="no sound")
+    parser.add_argument("--list", action="store_true", help="show capture devices and modes")
+    parser.add_argument("--config", action="store_true", help="create the config file and print its path")
+    parser.add_argument("--version", action="version", version=VERSION)
+    args = parser.parse_args(argv)
+
+    cfg = load_config()
+    if args.fullscreen:
+        cfg["fullscreen"] = True
+    if args.windowed:
+        cfg["fullscreen"] = False
+    if args.device:
+        cfg["device"] = args.device
+    if args.no_audio:
+        cfg["audio"] = False
+
+    if args.config:
+        if not os.path.exists(CONFIG_PATH):
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_CONFIG, f, indent=2)
+                f.write("\n")
+        print(CONFIG_PATH)
+        return 0
+    if args.list:
+        return cmd_list(cfg)
+
+    pid = running_pid()
+    if pid:
+        if args.toggle:
+            os.kill(pid, signal.SIGTERM)
+        else:
+            log("already open")
+        return 0
+
+    write_pid()
+    try:
+        return run(cfg)
+    finally:
+        remove_pid()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

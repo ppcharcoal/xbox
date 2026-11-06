@@ -1,17 +1,17 @@
-# Xbox Play
+# Xbox
 
-Xbox **Remote Play** (gra z własnej konsoli) na Linuksie w osobnym oknie, dopracowane pod
-**Wayland / Hyprland**. To lekka nakładka na systemowy Electron, która otwiera Remote Play z
-`xbox.com` z wbudowanym [Better xCloud](https://github.com/redphx/better-xcloud).
+Obraz z Xboxa na ekranie komputera z **karty przechwytującej HDMI** (USB, UVC), z dźwiękiem
+i jak najmniejszym opóźnieniem. Na Linuksie (Arch, Wayland, Hyprland).
 
-- 🎮 tylko Remote Play: start od razu na Twojej konsoli, bez strony Cloud Gaming
-- 🔁 automatyczne łączenie z ostatnio używaną konsolą
-- 🕹️ pad Xbox (USB / Bluetooth / adapter), **łącznie z przyciskiem Xbox** (także przytrzymaniem)
-- ⌨️ **mysz i klawiatura** zamieniane na pada przez wbudowany mapper (F8)
-- 📺 1080p (HQ), user agent Edge (najlepsza jakość od Microsoftu)
-- 🪟 natywny Wayland, pełny ekran, ekran nie gaśnie podczas grania (działa z `hypridle`)
-- 🔄 Better xCloud aktualizuje się sam przy starcie
-- 🔒 logowanie Microsoft zostaje zapamiętane; obce linki otwierają się w zwykłej przeglądarce
+- sam znajduje kartę (pomija kamerki internetowe) i wybiera najlepszy tryb:
+  1920×1080 przy najwyższej liczbie klatek, przy równej liczbie klatek obraz nieskompresowany
+- obraz przez `mpv` w trybie najmniejszego opóźnienia, prosto z karty
+- dźwięk z karty na domyślnym wyjściu (PipeWire), osobno od obrazu, żeby nie opóźniał
+- pełny ekran, ekran nie gaśnie podczas grania
+- `xbox --toggle` otwiera i zamyka okno (pod skrót klawiszowy)
+
+Pad łączy się bezpośrednio z Xboxem, więc działa normalnie. Mysz i klawiaturę dla Xboxa
+podłącza się do konsoli (np. przez przełącznik USB), bo karta przesyła tylko obraz i dźwięk.
 
 ## Instalacja (Arch)
 
@@ -19,171 +19,63 @@ Xbox **Remote Play** (gra z własnej konsoli) na Linuksie w osobnym oknie, dopra
 git clone https://github.com/ppcharcoal/xbox && cd xbox && makepkg -si
 ```
 
-Aktualizacja:
+Aktualizacja: `cd xbox && git pull && makepkg -si`.
+
+## Podłączenie
+
+```
+Xbox ─HDMI─► karta (HDMI IN) ─USB 3─► komputer
+                 └─ HDMI OUT ─► telewizor (opcjonalnie)
+```
+
+- Kartę podłącz **bezpośrednio do portu USB 3 w komputerze**, nie przez hub (na hubie może
+  działać tylko jako USB 2.0 albo zrywać inne urządzenia).
+- Na Xboxie: **Ustawienia → Ogólne → Opcje TV i wyświetlania**:
+  - rozdzielczość **1080p**, odświeżanie **60 Hz** (albo 120 Hz, jeśli karta przechwytuje 1080p120),
+  - **Wierność wideo → wyłącz „Zezwalaj na HDCP”**, inaczej obraz będzie czarny
+    (gry działają normalnie, nie działają tylko aplikacje typu Netflix).
+
+## Używanie
 
 ```bash
-cd xbox && git pull && makepkg -si
+xbox                # otwórz (pełny ekran)
+xbox --windowed     # w oknie
+xbox --toggle       # otwórz / zamknij
+xbox --list         # wykryte karty, ich tryby i źródło dźwięku
 ```
 
-Odinstalowanie: `sudo pacman -R xbox-play` (ustawienia i logowanie zostają w `~/.config/xbox-play`).
+W oknie: **f** pełny ekran, **Esc** wyjście z pełnego ekranu, **q** zamknij.
 
-## Jak to działa
+## Ustawienia
 
-1. Na Xboxie: **Ustawienia → Urządzenia i połączenia → Funkcje zdalne → Włącz funkcje zdalne**.
-2. Uruchom **Xbox Play** z menu aplikacji albo komendą `xbox-play`.
-3. Zaloguj się kontem Microsoft (tym samym co na konsoli).
-4. Wybierz konsolę i **Graj zdalnie na tym urządzeniu**.
+`xbox --config` tworzy `~/.config/xbox/config.json`:
 
-Od tej pory aplikacja **przy każdym starcie łączy się od razu z tą konsolą**. Gdy zakończysz
-grę albo połączenie się nie uda, wracasz na listę konsol (nigdy na Cloud Gaming).
-Listę konsol otworzysz też w każdej chwili przez **Ctrl+Shift+C** albo `xbox-play --pick`.
-
-> Włączaj Xboxa przyciskiem na konsoli, nie padem: pad włączony przy konsoli łączy się z nią,
-> a nie z komputerem.
-
-## Przycisk Xbox
-
-- **Przycisk Xbox na padzie** działa: aplikacja czyta go bezpośrednio z pada (`/dev/input`),
-  więc nie zależy od tego, czy przeglądarka go widzi.
-- **Krótkie naciśnięcie** otwiera przewodnik, **przytrzymanie** (dłużej niż pół sekundy) jest
-  przekazywane do konsoli jako prawdziwe przytrzymanie (np. menu zasilania).
-- **F9** robi to samo z klawiatury, a w trybie myszy i klawiatury także klawisz **`** (pod Esc).
-- **Ctrl+Shift+G** otwiera test pada (przycisk Xbox to nr 16).
-
-## Mysz i klawiatura
-
-Remote Play od Microsoftu nie przyjmuje myszy i klawiatury, więc aplikacja ma własny mapper,
-który zamienia je na pada (działa razem z prawdziwym padem albo zamiast niego):
-
-1. W trakcie gry naciśnij **F8** (pojawi się komunikat u góry ekranu).
-2. **Kliknij w obraz**, żeby złapać kursor: mysz steruje prawą gałką.
-3. **Esc** zwalnia kursor, **F8** wyłącza mapper.
-
-| Klawisz | Pad | | Klawisz | Pad |
-|---|---|---|---|---|
-| W A S D | lewa gałka | | mysz | prawa gałka |
-| I J K L | prawa gałka | | ← ↑ → ↓ / 1 2 3 4 | krzyżak |
-| Spacja, E | A | | C, Backspace | B |
-| R | X | | V | Y |
-| Q | LB | | F | RB |
-| prawy przycisk myszy | LT | | lewy przycisk myszy | RT |
-| Shift, X | L3 | | Z, środkowy przycisk | R3 |
-| Tab | View | | Enter | Menu |
-| **`** | Xbox | | | |
-
-### Edytor sterowania i profile
-
-**Ctrl+Shift+M** (albo w menu aplikacji: *Xbox Play → Sterowanie*, albo `xbox-play --editor`)
-otwiera edytor:
-
-- kliknij przycisk na rysunku pada albo na liście i naciśnij klawisz, przycisk myszy
-  (także boczne) albo przekręć **kółko myszy** (Esc anuluje); najedź na klawisz i kliknij **×**,
-  żeby go usunąć,
-- **kilka klawiszy na jeden przycisk**: kliknij **+** przy przycisku i dodaj kolejny klawisz,
-- **jeden klawisz na kilka przycisków naraz** (np. LB+RB): przypisz ten sam klawisz do kolejnego
-  przycisku; na klawiszu pojawi się znacznik **+1**,
-- **akceleracja** (szybszy ruch ręki obraca kamerę ponad proporcję; 0 = wyłączona),
-- **martwa strefa gry**: każdy ruch myszy zaczyna od tej wartości, żeby małe ruchy nie ginęły
-  w martwej strefie gałki w grze (0 = zwykła gałka; domyślnie 20%),
-- suwak **czułość myszy**, **wygładzanie** (kamera płynnie podąża za ręką jak kursor na
-  komputerze, zamiast skakać jak gałka; domyślnie włączone) i **odwróć oś Y**,
-- **profile**, np. osobny dla każdej gry: *Nowy profil*, *Duplikuj*, *Zmień nazwę*, *Usuń*,
-  *Przywróć domyślne*,
-- zmiany zapisują się same i działają od razu w grze, bez odświeżania,
-- **F7** w grze przełącza na następny profil (nazwa pojawia się na ekranie).
-
-Klawisze zajęte przez aplikację (F5, F7, F8, F9, F11, F12, Esc) nie mogą być przypisane.
-Profile są zapisane w `~/.config/xbox-play/mappings.json`.
-
-> Celowanie myszą w grach online może być traktowane jak oszukiwanie.
-
-## Skróty
-
-| Klawisz | Akcja |
+| Opcja | Znaczenie |
 |---|---|
-| **F11** | pełny ekran |
-| **F9** | przycisk Xbox |
-| **F8** | mysz i klawiatura jako pad (włącz/wyłącz) |
-| **F7** | następny profil sterowania |
-| **Ctrl+Shift+M** | edytor sterowania |
-| **Ctrl+Shift+C** | lista konsol |
-| **Ctrl+Shift+G** | test pada |
-| **F5 / Ctrl+R** | odśwież |
-| **Ctrl+Shift+U** | wymuś aktualizację Better xCloud i odśwież |
-| **Alt+←/→** | wstecz / dalej |
-| **F12** | narzędzia deweloperskie |
-| **Ctrl+Q** | zamknij |
+| `device` | np. `/dev/video0`; puste = automatycznie |
+| `width`, `height` | rozmiar obrazu (1920×1080) |
+| `fps` | 0 = najwyższa dostępna |
+| `format` | puste = automatycznie, albo `MJPG` / `YUYV` |
+| `fullscreen` | start w pełnym ekranie |
+| `audio` | dźwięk z karty |
+| `audio_source` | inne źródło PipeWire; puste = wejście karty |
+| `audio_latency_ms` | opóźnienie dźwięku (25 ms) |
+| `mpv_args` | dodatkowe opcje mpv |
 
-## Hyprland
+## Gdy coś nie działa
 
-Klasa okna (`app_id`) to `xbox-play`. Przykład do `hyprland.conf`:
+- **„Nie widzę karty”**: `xbox --list`; sprawdź, czy karta jest w porcie USB 3, a kabel przesyła dane.
+- **Czarny obraz**: wyłącz HDCP na Xboxie (wyżej).
+- **„Karta jest zajęta”**: zamknij OBS albo inny program, który z niej korzysta.
+- **Brak dźwięku**: `xbox --list` pokazuje źródło dźwięku; jeśli „not found”, sprawdź
+  `pactl list short sources` i wpisz nazwę do `audio_source`.
 
-```ini
-# Super+X: Xbox na pełnym ekranie na workspace 9
-bind = SUPER, X, exec, [workspace 9] uwsm app -- xbox-play --fullscreen
+## Testy
+
+```bash
+python -m unittest discover -s tests
 ```
-
-Bez uwsm: `bind = SUPER, X, exec, [workspace 9] xbox-play --fullscreen`.
-Ponowne wywołanie nie otwiera drugiego okna, tylko przełącza na istniejące.
-
-## Opcje
-
-Linia poleceń:
-
-| Opcja | Działanie |
-|---|---|
-| `--fullscreen` / `--windowed` | start w pełnym ekranie / w oknie |
-| `--pick` | pokaż listę konsol zamiast łączyć się automatycznie |
-| `--editor` | otwórz edytor sterowania |
-| `--cloud` | wyłącz tryb „tylko Remote Play” (Cloud Gaming dostępny) |
-| `--url=https://…` | inna strona startowa |
-| `--vaapi` | sprzętowe dekodowanie wideo (VA-API) |
-| `--no-bx` | bez Better xCloud |
-
-Plik `~/.config/xbox-play/config.json` (tworzony przy pierwszym starcie; brakujące klucze
-mają wartości domyślne):
-
-```json
-{
-  "remotePlayOnly": true,
-  "autoConnect": true,
-  "fullscreen": false,
-  "betterXcloud": true,
-  "autoUpdateBetterXcloud": true,
-  "userAgent": "edge-windows",
-  "vaapi": false,
-  "hideScrollbars": true,
-  "mapper": true,
-  "startUrl": "https://www.xbox.com/play",
-  "betterXcloudDefaults": {
-    "stream.video.resolution": "1080p-hq",
-    "xhome.video.resolution": "1080p-hq",
-    "block.tracking": true,
-    "ui.feedbackDialog.disabled": true,
-    "ui.hideScrollbar": true
-  }
-}
-```
-
-- `startUrl` jest używany tylko przy `"remotePlayOnly": false`.
-- Sterowanie myszą i klawiaturą ustawiasz w edytorze (Ctrl+Shift+M), nie w tym pliku.
-- Ostatnia konsola jest zapisana w `~/.config/xbox-play/state.json` (usuń plik, żeby ją zapomnieć).
-- `betterXcloudDefaults` są ustawiane tylko raz, jeśli sam ich nie zmieniłeś w Better xCloud.
-- Dodatkowe flagi Chromium: `~/.config/xbox-play-flags.conf` (jedna na linię).
-
-### VA-API
-
-Domyślnie wideo dekoduje procesor: 1080p60 H.264 to dla niego niewielkie obciążenie i zwykle
-daje najmniejsze opóźnienie. Jeśli chcesz odciążyć CPU, zainstaluj sterownik VA-API swojej karty
-(`libva-mesa-driver` dla AMD) i uruchom z `--vaapi` albo ustaw `"vaapi": true`. Jeśli obraz
-będzie czarny albo migał, wróć do `false`.
-
-## Ograniczenia
-
-- Remote Play od Microsoftu to maksymalnie **1080p i 60 fps** (120 fps tylko z kartą przechwytującą).
-- Opóźnienie zależy od sieci: Xbox i PC najlepiej podłączyć kablem.
-- Pad musi być połączony z **komputerem**, nie z konsolą.
 
 ## Licencja
 
-MIT. Better xCloud © redphx, licencja MIT; projekt niezwiązany z Microsoftem.
+MIT. Projekt niezwiązany z Microsoftem; „Xbox” to znak towarowy Microsoftu.

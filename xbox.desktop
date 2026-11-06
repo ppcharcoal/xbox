@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Xbox
+GenericName=Obraz z konsoli
+Comment=Xbox na ekranie komputera z karty przechwytującej HDMI
+Exec=xbox
+Icon=xbox
+Terminal=false
+Categories=Game;AudioVideo;
+Keywords=xbox;konsola;capture;hdmi;
+StartupWMClass=xbox
+Actions=windowed;
+
+[Desktop Action windowed]
+Name=W oknie
+Exec=xbox --windowed
