@@ -195,6 +195,20 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("--fs", x.mpv_cmd("/dev/video0", ("YUYV", 1920, 1080, 30.0), x.merge_config({"fullscreen": False})))
         self.assertIn("input_format=yuyv422", " ".join(x.mpv_cmd("/dev/video0", ("YUYV", 1280, 720, 60.0), x.merge_config({}))))
 
+    def test_menu_modes_and_state(self):
+        modes = x.parse_formats(MS2130)
+        mm = x.menu_modes(modes)
+        self.assertEqual(mm[0], ["YUYV", 1920, 1080, 30.0, "yuyv422"])   # uncompressed first
+        self.assertEqual(len(mm), 6)
+        path = x.write_menu_state("/dev/video0", modes, ("YUYV", 1920, 1080, 30.0),
+                                  x.merge_config({"format": "YUYV"}), os.path.join(tempfile.mkdtemp(), "s.json"))
+        st = json.load(open(path))
+        self.assertEqual(st["url"], "av://v4l2:/dev/video0")
+        self.assertEqual(st["best"], ["MJPG", 1920, 1080, 60.0, "mjpeg"])
+        self.assertFalse(st["auto"])
+        self.assertIn("--script-opts=xbox-state=/s.json",
+                      x.mpv_cmd("/dev/video0", ("YUYV", 1920, 1080, 30.0), x.merge_config({}), known=set(), menu_state="/s.json"))
+
     def test_loopback(self):
         cmd = x.loopback_cmd("alsa_input.usb-X", x.merge_config({}))
         self.assertEqual(cmd[:5], ["pw-loopback", "-n", "xbox-audio", "-C", "alsa_input.usb-X"])

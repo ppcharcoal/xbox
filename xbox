@@ -18,13 +18,14 @@ import sys
 import time
 
 APP = "xbox"
-VERSION = "2.0.3"
+VERSION = "2.1.0"
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
 CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
 CONFIG_PATH = os.path.join(CONFIG_HOME, APP, "config.json")
 SYSFS = "/sys"  # replaced in tests
+MENU_STATE = os.path.join(RUNTIME_DIR, f"{APP}-menu.json")
 
 DEFAULT_CONFIG = {
     # /dev/videoN of the capture card; empty = find it automatically
@@ -297,7 +298,47 @@ def no_wait_options(known):
     return opts
 
 
-def mpv_cmd(dev, mode, cfg, known=None):
+def menu_script():
+    """menu.lua next to this file (repo) or the installed copy."""
+    here = os.path.join(os.path.dirname(os.path.realpath(__file__)), "menu.lua")
+    return here if os.path.exists(here) else "/usr/share/xbox/menu.lua"
+
+
+def menu_modes(modes):
+    """Modes for the settings menu: usable ones, uncompressed first, big and fast first."""
+    usable = sorted({m for m in modes if m[0] in LAVF_FORMAT},
+                    key=lambda m: (m[0] not in UNCOMPRESSED, m[0], -m[1] * m[2], -m[3]))
+    return [[m[0], m[1], m[2], m[3], LAVF_FORMAT[m[0]]] for m in usable]
+
+
+def write_menu_state(dev, modes, mode, cfg, path=None):
+    """What the settings menu needs: the card URL, its modes, the current and the best one."""
+    best = choose_mode(modes, 1920, 1080, 0, "")
+    state = {
+        "url": f"av://v4l2:{dev}",
+        "modes": menu_modes(modes),
+        "current": [mode[0], mode[1], mode[2], mode[3], LAVF_FORMAT[mode[0]]],
+        "best": [best[0], best[1], best[2], best[3], LAVF_FORMAT[best[0]]] if best else None,
+        "auto": not cfg["format"] and not cfg["fps"],
+        "config_path": CONFIG_PATH,
+    }
+    path = path or MENU_STATE
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    return path
+
+
+def ensure_config():
+    """The settings menu saves into the config file, so it has to exist."""
+    if not os.path.exists(CONFIG_PATH):
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=2)
+            f.write("\n")
+
+
+def mpv_cmd(dev, mode, cfg, known=None, menu_state=None):
     fourcc, width, height, fps = mode
     fps_text = f"{fps:g}"
     lavf = f"video_size={width}x{height},framerate={fps_text},input_format={LAVF_FORMAT[fourcc]},fflags=+nobuffer"
@@ -319,6 +360,8 @@ def mpv_cmd(dev, mode, cfg, known=None):
     ] + no_wait_options(mpv_options() if known is None else known)
     if cfg["fullscreen"]:
         cmd.append("--fs")
+    if menu_state:
+        cmd += [f"--script={menu_script()}", f"--script-opts=xbox-state={menu_state}"]
     return cmd + list(cfg["mpv_args"])
 
 
@@ -398,8 +441,16 @@ def run(cfg):
             else:
                 log("the card's sound input was not found: sound is off")
 
+    try:
+        ensure_config()
+        menu_state = write_menu_state(device["dev"], modes, mode, cfg)
+    except OSError as err:
+        log(f"settings menu unavailable: {err}")
+        menu_state = None
+
     started = time.monotonic()
-    video = subprocess.Popen(mpv_cmd(device["dev"], mode, cfg), stderr=subprocess.PIPE, text=True)
+    video = subprocess.Popen(mpv_cmd(device["dev"], mode, cfg, menu_state=menu_state),
+                             stderr=subprocess.PIPE, text=True)
 
     def on_signal(*_):
         stop(video)
@@ -410,6 +461,11 @@ def run(cfg):
 
     _, err = video.communicate()
     stop(audio)
+    if menu_state:
+        try:
+            os.remove(menu_state)
+        except OSError:
+            pass
     code = video.returncode
     if code not in (0, None, -signal.SIGTERM, 4) and time.monotonic() - started < 5:
         detail = (err or "").strip().splitlines()[-1:] or [""]

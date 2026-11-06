@@ -45,7 +45,24 @@ xbox --list         # wykryte karty, ich tryby i źródło dźwięku
 xbox --format MJPG  # wymuś format obrazu (MJPG albo YUYV)
 ```
 
-W oknie: **f** pełny ekran, **Esc** wyjście z pełnego ekranu, **q** zamknij.
+W oknie:
+
+| Klawisz | Działanie |
+|---|---|
+| **Ctrl+Shift+M** | menu ustawień obrazu |
+| **Ctrl+F** albo **f** | pełny ekran |
+| **Esc** | wyjście z pełnego ekranu / zamknięcie menu |
+| **q** | zamknij |
+
+### Menu ustawień (Ctrl+Shift+M)
+
+Strzałkami (albo kółkiem myszy) wybierasz, **Enter** zatwierdza:
+
+- **Pełny ekran**: włącza/wyłącza i zapamiętuje jako domyślny,
+- **Automatycznie**: najlepszy tryb karty (1080p, najwięcej klatek, przy równej liczbie
+  klatek YUYV),
+- **lista trybów karty** (format, rozdzielczość, kl./s): tryb przełącza się od razu w tym samym
+  oknie i zostaje zapamiętany na następne uruchomienia (`~/.config/xbox/config.json`).
 
 ## Ustawienia
 
