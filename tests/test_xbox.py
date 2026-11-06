@@ -148,6 +148,20 @@ class DeviceTests(unittest.TestCase):
         d = {"usb": "/nowhere"}
         self.assertEqual(x.find_audio_source(x.merge_config({"audio_source": "mine"}), d, self.sys, "[]"), "mine")
 
+    def test_card_number_only_on_the_device_object(self):
+        dump = [
+            {"id": 70, "type": "PipeWire:Interface:Device", "info": {"props": {
+                "media.class": "Audio/Device", "api.alsa.card": "1", "device.name": "alsa_card.usb-MACROSILICON"}}},
+            {"id": 71, "type": "PipeWire:Interface:Node", "info": {"props": {
+                "media.class": "Audio/Source", "device.id": 70, "node.name": "alsa_input.usb-MACROSILICON-02.mono"}}},
+        ]
+        self.assertEqual(x.pipewire_source_for_card(1, json.dumps(dump)), "alsa_input.usb-MACROSILICON-02.mono")
+
+    def test_card_number_as_pcm_card(self):
+        dump = [{"id": 5, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "api.alsa.pcm.card": 1, "node.name": "src"}}}]
+        self.assertEqual(x.pipewire_source_for_card(1, dump), "src")
+
     def test_no_sound(self):
         self.assertIsNone(x.pipewire_source_for_card(5, json.dumps(PW_DUMP)))
         self.assertIsNone(x.pipewire_source_for_card(1, "not json"))

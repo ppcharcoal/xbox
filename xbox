@@ -18,7 +18,7 @@ import sys
 import time
 
 APP = "xbox"
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
@@ -214,18 +214,33 @@ def alsa_card_for(usb_dev, sysfs=None):
     return None
 
 
+CARD_KEYS = ("api.alsa.pcm.card", "alsa.card", "api.alsa.card")
+
+
 def pipewire_source_for_card(card, pw_dump):
-    """node.name of the PipeWire audio source on ALSA card `card` (from `pw-dump` JSON)."""
+    """node.name of the PipeWire audio source on ALSA card `card` (from `pw-dump` JSON).
+    The card number is on the node (api.alsa.pcm.card / alsa.card) or only on its
+    device object (api.alsa.card), depending on the PipeWire / WirePlumber version."""
     try:
         objects = json.loads(pw_dump) if isinstance(pw_dump, str) else pw_dump
     except ValueError:
         return None
-    for obj in objects or []:
-        props = ((obj.get("info") or {}).get("props") or {}) if isinstance(obj, dict) else {}
-        if props.get("media.class") != "Audio/Source":
+    if not isinstance(objects, list):
+        return None
+
+    def props_of(obj):
+        return ((obj.get("info") or {}).get("props") or {}) if isinstance(obj, dict) else {}
+
+    devices = {obj.get("id"): props_of(obj) for obj in objects
+               if isinstance(obj, dict) and str(obj.get("type", "")).endswith("Device")}
+    for obj in objects:
+        props = props_of(obj)
+        if props.get("media.class") != "Audio/Source" or not props.get("node.name"):
             continue
-        if str(props.get("api.alsa.card", "")) == str(card) and props.get("node.name"):
-            return props["node.name"]
+        dev_props = devices.get(props.get("device.id"), {})
+        for source in (props, dev_props):
+            if any(str(source.get(k, "")) == str(card) for k in CARD_KEYS):
+                return props["node.name"]
     return None
 
 
@@ -394,7 +409,9 @@ def cmd_list(cfg):
             if (m[1], m[2]) in ((1920, 1080), (1280, 720), (2560, 1440), (3840, 2160)):
                 print(f"    {m[0]} {m[1]}x{m[2]} @ {m[3]:g} fps{'   (used)' if m == best else ''}")
     if chosen:
+        card = alsa_card_for(chosen["usb"])
         source = find_audio_source(cfg, chosen) if shutil.which("pw-dump") else None
+        print(f"sound card (ALSA): {card if card is not None else 'not found on this USB device'}")
         print(f"sound: {source or 'not found'}")
     return 0
 
