@@ -7,7 +7,8 @@ i jak najmniejszym opóźnieniem. Na Linuksie (Arch, Wayland, Hyprland).
   1920×1080 przy najwyższej liczbie klatek, przy równej liczbie klatek obraz nieskompresowany
 - obraz przez `mpv` w trybie najmniejszego opóźnienia, prosto z karty
 - dźwięk z karty na domyślnym wyjściu (PipeWire), osobno od obrazu, żeby nie opóźniał
-- pełny ekran, ekran nie gaśnie podczas grania
+- pełny ekran; wygaszacz i blokada ekranu nie włączają się, dopóki okno jest otwarte
+  (`systemd-inhibit`, respektowany przez hypridle; nic w ich konfiguracji się nie zmienia)
 - `xbox --toggle` otwiera i zamyka okno (pod skrót klawiszowy)
 
 Pad łączy się bezpośrednio z Xboxem, więc działa normalnie. Mysz i klawiaturę dla Xboxa
@@ -78,6 +79,7 @@ Strzałkami (albo kółkiem myszy) wybierasz, **Enter** zatwierdza:
 | `audio` | dźwięk z karty |
 | `audio_source` | inne źródło PipeWire; puste = wejście karty |
 | `audio_latency_ms` | opóźnienie dźwięku (25 ms) |
+| `inhibit_idle` | brak wygaszacza i blokady ekranu, gdy Xbox jest otwarty |
 | `mpv_args` | dodatkowe opcje mpv |
 
 ## Gdy coś nie działa

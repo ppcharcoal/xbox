@@ -18,7 +18,7 @@ import sys
 import time
 
 APP = "xbox"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
@@ -44,6 +44,8 @@ DEFAULT_CONFIG = {
     "audio_source": "",
     # loopback latency in ms (0 = PipeWire default)
     "audio_latency_ms": 25,
+    # no screen saver / lock while Xbox is open (systemd-inhibit, honoured by hypridle)
+    "inhibit_idle": True,
     # extra mpv options, e.g. ["--video-rotate=0"]
     "mpv_args": [],
 }
@@ -267,6 +269,16 @@ def loopback_cmd(source, cfg):
     return cmd
 
 
+# ----------------------------------------------------------------------------- idle
+
+def inhibit_cmd():
+    """Keeps the screen saver / lock away for as long as the process lives. mpv's own
+    Wayland idle inhibitor only counts while its window is visible, so this covers the
+    rest (another workspace, the menu, a window behind others)."""
+    return ["systemd-inhibit", "--what=idle", "--who=Xbox", "--why=Obraz z konsoli Xbox",
+            "--mode=block", "sleep", "infinity"]
+
+
 # ----------------------------------------------------------------------------- video
 
 _MPV_OPTIONS = None
@@ -441,6 +453,11 @@ def run(cfg):
             else:
                 log("the card's sound input was not found: sound is off")
 
+    inhibitor = None
+    if cfg["inhibit_idle"] and shutil.which("systemd-inhibit"):
+        inhibitor = subprocess.Popen(inhibit_cmd(), stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, start_new_session=True)
+
     try:
         ensure_config()
         menu_state = write_menu_state(device["dev"], modes, mode, cfg)
@@ -461,6 +478,7 @@ def run(cfg):
 
     _, err = video.communicate()
     stop(audio)
+    stop(inhibitor)
     if menu_state:
         try:
             os.remove(menu_state)

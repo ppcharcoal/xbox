@@ -242,6 +242,7 @@ class RunTests(unittest.TestCase):
         self.tool("v4l2-ctl", f"""[ "$3" = /dev/video0 ] && printf '%s' '{ms}'; exit 0""")
         self.tool("pw-dump", f"cat <<'J'\n{json.dumps(PW_DUMP)}\nJ")
         self.tool("pw-loopback", f'echo "$@" > {self.out}/loopback.args; trap "echo stopped > {self.out}/loopback.state; exit 0" TERM; while :; do sleep 0.1; done')
+        self.tool("systemd-inhibit", f'echo "$@" > {self.out}/inhibit.args; trap "echo stopped > {self.out}/inhibit.state; exit 0" TERM; while :; do sleep 0.1; done')
 
     def tearDown(self):
         x.SYSFS, os.environ["PATH"], x.notify, x.RUNTIME_DIR, x.PID_FILE = self.old
@@ -265,6 +266,23 @@ class RunTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertEqual(open(os.path.join(self.out, "loopback.state")).read().strip(), "stopped")
+
+    def test_screen_saver_blocked_while_open(self):
+        self.tool("mpv", f'cat {self.out}/inhibit.args > {self.out}/inhibit-during; exit 0')
+        self.assertEqual(x.run(x.merge_config({})), 0)
+        self.assertEqual(open(os.path.join(self.out, "inhibit-during")).read().split(),
+                         ["--what=idle", "--who=Xbox", "--why=Obraz", "z", "konsoli", "Xbox",
+                          "--mode=block", "sleep", "infinity"])
+        for _ in range(30):
+            if os.path.exists(os.path.join(self.out, "inhibit.state")):
+                break
+            time.sleep(0.1)
+        self.assertEqual(open(os.path.join(self.out, "inhibit.state")).read().strip(), "stopped")
+
+    def test_inhibit_can_be_turned_off(self):
+        self.tool("mpv", "exit 0")
+        self.assertEqual(x.run(x.merge_config({"inhibit_idle": False})), 0)
+        self.assertFalse(os.path.exists(os.path.join(self.out, "inhibit.args")))
 
     def test_busy_card(self):
         self.tool("mpv", 'echo "[ffmpeg] v4l2: ioctl(VIDIOC_STREAMON): Device or resource busy" >&2; exit 2')

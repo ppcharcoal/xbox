@@ -2,7 +2,7 @@
 # Build & install from a clone of this repo:  makepkg -si
 
 pkgname=xbox
-pkgver=2.1.0
+pkgver=2.1.1
 pkgrel=1
 pkgdesc="The Xbox on the PC screen from an HDMI capture card, with low latency and sound"
 arch=('any')
