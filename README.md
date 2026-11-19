@@ -1,7 +1,7 @@
 # Xbox
 
 Obraz z Xboxa na ekranie komputera z **karty przechwytującej HDMI** (USB, UVC), z dźwiękiem
-i jak najmniejszym opóźnieniem. Na Linuksie (Arch, Wayland, Hyprland).
+i jak najmniejszym opóźnieniem. Na Linuksie (Arch, Wayland, Hyprland) i na Windows 10/11.
 
 - sam znajduje kartę (pomija kamerki internetowe) i wybiera najlepszy tryb:
   1920×1080 przy najwyższej liczbie klatek, przy równej liczbie klatek obraz nieskompresowany
@@ -13,6 +13,15 @@ i jak najmniejszym opóźnieniem. Na Linuksie (Arch, Wayland, Hyprland).
 
 Pad łączy się bezpośrednio z Xboxem, więc działa normalnie. Mysz i klawiaturę dla Xboxa
 podłącza się do konsoli (np. przez przełącznik USB), bo karta przesyła tylko obraz i dźwięk.
+
+## Windows
+
+Pobierz **[Xbox-Windows.zip](https://github.com/ppcharcoal/xbox/releases/latest/download/Xbox-Windows.zip)**,
+rozpakuj całe archiwum i uruchom **Xbox.exe** (mpv i FFmpeg są w zestawie). Klawisze i menu
+są takie same jak na Linuksie; `Lista-kart.bat` pokazuje wykryte karty, tryby i dźwięk.
+Ustawienia: `%APPDATA%\Xbox\config.json`, dziennik: `%LOCALAPPDATA%\Xbox\xbox.log`.
+Na Windows obraz idzie przez DirectShow, a dźwięk karty przez drugie, niewidoczne mpv.
+Paczkę buduje GitHub Actions (`.github/workflows/windows.yml`) przy każdym tagu `v*`.
 
 ## Instalacja (Arch)
 

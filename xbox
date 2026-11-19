@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Xbox: the Xbox on the PC screen, from an HDMI capture card (UVC), with its sound.
 
-Video: mpv with the lowest-latency settings, straight from the card (/dev/videoN).
-Sound: the card's own audio input played on the default output (PipeWire loopback).
+Linux:   video with mpv straight from the card (/dev/videoN, V4L2); sound through a
+         PipeWire loopback of the card's own audio input.
+Windows: video with mpv from the card through DirectShow; sound from the card's
+         DirectShow audio input in a second, window-less mpv. Cards and modes are
+         listed with the bundled ffmpeg.exe.
 The card and the best mode (1920x1080, highest frame rate) are found automatically.
 """
 
@@ -15,20 +18,30 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 APP = "xbox"
-VERSION = "2.1.1"
+VERSION = "2.2.0"
+WINDOWS = sys.platform == "win32"
+BACKEND = "dshow" if WINDOWS else "v4l2"
 
-RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+if WINDOWS:
+    RUNTIME_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "Xbox")
+    CONFIG_PATH = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Xbox", "config.json")
+else:
+    RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    CONFIG_PATH = os.path.join(CONFIG_HOME, APP, "config.json")
 PID_FILE = os.path.join(RUNTIME_DIR, f"{APP}.pid")
-CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-CONFIG_PATH = os.path.join(CONFIG_HOME, APP, "config.json")
+LOG_FILE = os.path.join(RUNTIME_DIR, f"{APP}.log")
 SYSFS = "/sys"  # replaced in tests
 MENU_STATE = os.path.join(RUNTIME_DIR, f"{APP}-menu.json")
+# no console window for helper programs on Windows
+NO_WINDOW = {"creationflags": 0x08000000} if WINDOWS else {}
 
 DEFAULT_CONFIG = {
-    # /dev/videoN of the capture card; empty = find it automatically
+    # the capture card: /dev/videoN (Linux) or its name (Windows); empty = automatic
     "device": "",
     # wanted picture size; the highest frame rate available at this size is used
     "width": 1920,
@@ -40,11 +53,11 @@ DEFAULT_CONFIG = {
     "fullscreen": True,
     # play the card's sound on the default output
     "audio": True,
-    # PipeWire source to play; empty = the capture card's own audio input
+    # PipeWire source (Linux) / DirectShow audio device (Windows); empty = the card's own
     "audio_source": "",
-    # loopback latency in ms (0 = PipeWire default)
+    # sound latency in ms (0 = default)
     "audio_latency_ms": 25,
-    # no screen saver / lock while Xbox is open (systemd-inhibit, honoured by hypridle)
+    # no screen saver / lock while Xbox is open
     "inhibit_idle": True,
     # extra mpv options, e.g. ["--video-rotate=0"]
     "mpv_args": [],
@@ -52,18 +65,53 @@ DEFAULT_CONFIG = {
 
 # V4L2 fourcc -> FFmpeg v4l2 "input_format"
 LAVF_FORMAT = {"MJPG": "mjpeg", "YUYV": "yuyv422", "NV12": "nv12", "YU12": "yuv420p", "RGB3": "rgb24"}
+# V4L2 fourcc -> FFmpeg dshow option choosing that format
+DSHOW_FORMAT = {"MJPG": "vcodec=mjpeg", "YUYV": "pixel_format=yuyv422", "NV12": "pixel_format=nv12",
+                "YU12": "pixel_format=yuv420p", "RGB3": "pixel_format=bgr24"}
 UNCOMPRESSED = {"YUYV", "NV12", "YU12", "RGB3"}
 
 
 def log(msg):
-    print(f"[{APP}] {msg}", file=sys.stderr, flush=True)
+    line = f"[{APP}] {msg}"
+    if sys.stderr is not None:
+        print(line, file=sys.stderr, flush=True)
+        return
+    try:  # Windows app without a console
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+    except OSError:
+        pass
 
 
 def notify(text):
     log(text)
-    if shutil.which("notify-send"):
+    if WINDOWS:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, "Xbox", 0x30 | 0x10000)  # warning, foreground
+        except (OSError, AttributeError):
+            pass
+    elif shutil.which("notify-send"):
         subprocess.Popen(["notify-send", "-a", "Xbox", "-i", APP, "Xbox", text],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def app_dir():
+    """Folder of Xbox.exe (Windows build) or of this script."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.realpath(__file__))
+
+
+def tool(name):
+    """Path of a helper program: on Windows the copy shipped next to Xbox.exe, else PATH."""
+    if WINDOWS:
+        for sub in ("", "mpv", "ffmpeg", os.path.join("ffmpeg", "bin")):
+            path = os.path.join(app_dir(), sub, name + ".exe")
+            if os.path.exists(path):
+                return path
+    return shutil.which(name)
 
 
 def merge_config(user):
@@ -140,7 +188,88 @@ def choose_mode(modes, width=1920, height=1080, fps=0, fmt=""):
     return exact[0]
 
 
+def clean_fps(fps):
+    fps = round(float(fps), 3)
+    return float(round(fps)) if abs(fps - round(fps)) < 0.01 else fps
+
+
+def parse_dshow_options(text):
+    """Modes from `ffmpeg -f dshow -list_options true -i video=NAME`, as (fourcc, w, h, fps).
+    Each line gives a size and a frame rate range; the highest rate is offered, and 60 and
+    30 too when they are inside the range."""
+    modes = []
+    pattern = re.compile(r"(pixel_format|vcodec)=(\w+)\s+min s=(\d+)x(\d+) fps=([\d.]+)\s+"
+                         r"max s=(\d+)x(\d+) fps=([\d.]+)")
+    names = {v: k for k, v in DSHOW_FORMAT.items()}
+    for line in (text or "").splitlines():
+        m = pattern.search(line)
+        if not m:
+            continue
+        fourcc = names.get(f"{m.group(1)}={m.group(2)}")
+        if not fourcc:
+            continue
+        lo_w, lo_h, hi_w, hi_h = (int(m.group(i)) for i in (3, 4, 6, 7))
+        lo_fps, hi_fps = clean_fps(m.group(5)), clean_fps(m.group(8))
+        sizes = {(hi_w, hi_h)}
+        for w, h in ((1920, 1080), (1280, 720)):  # a range of sizes
+            if lo_w <= w <= hi_w and lo_h <= h <= hi_h:
+                sizes.add((w, h))
+        rates = {hi_fps} | {r for r in (60.0, 30.0) if lo_fps <= r < hi_fps}
+        for w, h in sizes:
+            for r in rates:
+                if (fourcc, w, h, r) not in modes:
+                    modes.append((fourcc, w, h, r))
+    return modes
+
+
+def parse_dshow_devices(text):
+    """[{name, video, audio, alt}] from `ffmpeg -list_devices true -f dshow -i dummy`
+    (both the newer "NAME" (video) lines and the older per-section listing)."""
+    devices = []
+    section = ""
+    for line in (text or "").splitlines():
+        if "DirectShow video devices" in line:
+            section = "video"
+            continue
+        if "DirectShow audio devices" in line:
+            section = "audio"
+            continue
+        alt = re.search(r'Alternative name "(.*)"', line)
+        if alt:
+            if devices:
+                devices[-1]["alt"] = alt.group(1)
+            continue
+        m = re.search(r'\]\s+"(.+)"(?:\s+\(([^)]*)\))?\s*$', line)
+        if m:
+            kinds = m.group(2) if m.group(2) is not None else section
+            devices.append({"name": m.group(1), "video": "video" in kinds,
+                            "audio": "audio" in kinds, "alt": ""})
+    return devices
+
+
+def dshow_devices(ffmpeg=None):
+    try:
+        out = subprocess.run([ffmpeg or tool("ffmpeg") or "ffmpeg", "-hide_banner", "-list_devices", "true",
+                              "-f", "dshow", "-i", "dummy"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=10, **NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_dshow_devices(out.stderr + out.stdout)
+
+
+def dshow_modes(name, ffmpeg=None):
+    try:
+        out = subprocess.run([ffmpeg or tool("ffmpeg") or "ffmpeg", "-hide_banner", "-list_options", "true",
+                              "-f", "dshow", "-i", f"video={name}"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=10, **NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_dshow_options(out.stderr + out.stdout)
+
+
 def list_modes(dev):
+    if WINDOWS:
+        return dshow_modes(dev)
     try:
         out = subprocess.run(["v4l2-ctl", "--list-formats-ext", "-d", dev],
                              capture_output=True, text=True, timeout=5)
@@ -162,7 +291,10 @@ def usb_device_of(sysfs_device):
 
 
 def video_devices(sysfs=None):
-    """[{dev, name, usb}] for V4L2 nodes (capture and others; modes decide later)."""
+    """[{dev, name, usb}] for V4L2 nodes (capture and others; modes decide later).
+    On Windows the DirectShow video devices, by name."""
+    if WINDOWS and sysfs is None:
+        return [{"dev": d["name"], "name": d["name"], "usb": None} for d in dshow_devices() if d["video"]]
     sysfs = sysfs or SYSFS
     out = []
     for node in sorted(glob.glob(os.path.join(sysfs, "class/video4linux/video*")),
@@ -189,10 +321,10 @@ def score_device(name, modes):
     return score
 
 
-def find_capture(cfg, sysfs=None, modes_of=None):
+def find_capture(cfg, sysfs=None, modes_of=None, devices=None):
     """(device dict, modes) of the capture card, or (None, [])."""
     candidates = []
-    for d in video_devices(sysfs):
+    for d in (devices if devices is not None else video_devices(sysfs)):
         if cfg["device"] and d["dev"] != cfg["device"]:
             continue
         modes = (modes_of or list_modes)(d["dev"])
@@ -261,6 +393,31 @@ def find_audio_source(cfg, device, sysfs=None, pw_dump=None):
     return pipewire_source_for_card(card, pw_dump)
 
 
+def dshow_audio_for(video_name, devices):
+    """The DirectShow audio input of the capture card: the one named after the card
+    (e.g. "Digital Audio Interface (USB3 Video)"), else one that looks like a capture card."""
+    audio = [d["name"] for d in devices if d["audio"]]
+    wanted = video_name.lower()
+    for name in audio:
+        if wanted and wanted in name.lower():
+            return name
+    for name in audio:
+        if CAPTURE_WORDS.search(name) and not WEBCAM_WORDS.search(name) \
+                and not re.search(r"microphone|mikrofon|realtek|headset|stereo mix", name, re.I):
+            return name
+    return None
+
+
+def dshow_audio_cmd(name, cfg, mpv="mpv"):
+    """Window-less mpv playing the card's sound with a small buffer."""
+    buffer_ms = cfg["audio_latency_ms"] or 50
+    return [mpv, f"av://dshow:audio={name}", "--no-config", "--profile=low-latency", "--no-video",
+            "--force-window=no", "--cache=no", "--idle=no", "--terminal=no",
+            f"--audio-buffer={buffer_ms / 1000:g}",
+            f"--demuxer-lavf-o=audio_buffer_size={max(10, buffer_ms // 2)},fflags=+nobuffer",
+            "--title=Xbox (dźwięk)"]
+
+
 def loopback_cmd(source, cfg):
     cmd = ["pw-loopback", "-n", "xbox-audio", "-C", source,
            "--playback-props", "media.role=Game node.description=Xbox"]
@@ -279,17 +436,89 @@ def inhibit_cmd():
             "--mode=block", "sleep", "infinity"]
 
 
+class KeepAwake:
+    """Windows: no screen saver, lock or sleep while Xbox is open."""
+    FLAGS = 0x80000000 | 0x00000002 | 0x00000001  # ES_CONTINUOUS | DISPLAY | SYSTEM_REQUIRED
+
+    def __enter__(self):
+        self._set(self.FLAGS)
+        return self
+
+    def __exit__(self, *_):
+        self._set(0x80000000)
+
+    @staticmethod
+    def _set(flags):
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        except (OSError, AttributeError):
+            pass
+
+
+_JOB = None
+
+
+def children_die_with_me():
+    """Windows: put this process in a job that closes mpv (picture and sound) when Xbox
+    ends in any way, also when it is killed by `--toggle`."""
+    global _JOB
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", ctypes.c_uint64 * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        job = k32.CreateJobObjectW(None, None)
+        info = Extended()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if job and k32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info)) \
+                and k32.AssignProcessToJobObject(wintypes.HANDLE(job), k32.GetCurrentProcess()):
+            _JOB = job  # the handle stays open for as long as Xbox runs
+    except (OSError, AttributeError, ImportError):
+        pass
+
+
+def lua_path(path):
+    """A path mpv's Lua can open on Windows: Lua's io.open does not take UTF-8 names, so a
+    user folder like C:\\Users\\Paweł gets its short (8.3) ASCII form."""
+    if not WINDOWS or path.isascii():
+        return path
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024) and buf.value.isascii():
+            return buf.value
+    except (OSError, AttributeError):
+        pass
+    return path
+
+
 # ----------------------------------------------------------------------------- video
 
 _MPV_OPTIONS = None
 
 
-def mpv_options():
+def mpv_options(mpv="mpv"):
     """Option names this mpv knows (they change between mpv versions)."""
     global _MPV_OPTIONS
     if _MPV_OPTIONS is None:
         try:
-            out = subprocess.run(["mpv", "--list-options"], capture_output=True, text=True, timeout=10).stdout
+            out = subprocess.run([mpv, "--list-options"], capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=10, **NO_WINDOW).stdout
         except (OSError, subprocess.SubprocessError):
             out = ""
         _MPV_OPTIONS = set(re.findall(r"^\s*--([\w-]+)", out, re.M))
@@ -311,28 +540,50 @@ def no_wait_options(known):
 
 
 def menu_script():
-    """menu.lua next to this file (repo) or the installed copy."""
-    here = os.path.join(os.path.dirname(os.path.realpath(__file__)), "menu.lua")
-    return here if os.path.exists(here) else "/usr/share/xbox/menu.lua"
+    """menu.lua next to Xbox.exe / this file (repo) or the installed copy."""
+    for folder in (app_dir(), os.path.dirname(os.path.realpath(__file__))):
+        here = os.path.join(folder, "menu.lua")
+        if os.path.exists(here):
+            return here
+    return "/usr/share/xbox/menu.lua"
 
 
-def menu_modes(modes):
-    """Modes for the settings menu: usable ones, uncompressed first, big and fast first."""
+def card_url(dev, backend=None):
+    return f"av://dshow:video={dev}" if (backend or BACKEND) == "dshow" else f"av://v4l2:{dev}"
+
+
+def lavf_options(mode, backend=None):
+    """FFmpeg input options that open the card in this mode (--demuxer-lavf-o)."""
+    fourcc, width, height, fps = mode
+    if (backend or BACKEND) == "dshow":
+        fmt = DSHOW_FORMAT[fourcc]
+    else:
+        fmt = f"input_format={LAVF_FORMAT[fourcc]}"
+    return f"video_size={width}x{height},framerate={fps:g},{fmt},fflags=+nobuffer"
+
+
+def menu_entry(m, backend=None):
+    return [m[0], m[1], m[2], m[3], lavf_options(m, backend)]
+
+
+def menu_modes(modes, backend=None):
+    """Modes for the settings menu: usable ones, uncompressed first, big and fast first.
+    Each is [fourcc, width, height, fps, FFmpeg options opening it]."""
     usable = sorted({m for m in modes if m[0] in LAVF_FORMAT},
                     key=lambda m: (m[0] not in UNCOMPRESSED, m[0], -m[1] * m[2], -m[3]))
-    return [[m[0], m[1], m[2], m[3], LAVF_FORMAT[m[0]]] for m in usable]
+    return [menu_entry(m, backend) for m in usable]
 
 
-def write_menu_state(dev, modes, mode, cfg, path=None):
+def write_menu_state(dev, modes, mode, cfg, path=None, backend=None):
     """What the settings menu needs: the card URL, its modes, the current and the best one."""
     best = choose_mode(modes, 1920, 1080, 0, "")
     state = {
-        "url": f"av://v4l2:{dev}",
-        "modes": menu_modes(modes),
-        "current": [mode[0], mode[1], mode[2], mode[3], LAVF_FORMAT[mode[0]]],
-        "best": [best[0], best[1], best[2], best[3], LAVF_FORMAT[best[0]]] if best else None,
+        "url": card_url(dev, backend),
+        "modes": menu_modes(modes, backend),
+        "current": menu_entry(mode, backend),
+        "best": menu_entry(best, backend) if best else None,
         "auto": not cfg["format"] and not cfg["fps"],
-        "config_path": CONFIG_PATH,
+        "config_path": lua_path(CONFIG_PATH),
     }
     path = path or MENU_STATE
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -350,34 +601,58 @@ def ensure_config():
             f.write("\n")
 
 
-def mpv_cmd(dev, mode, cfg, known=None, menu_state=None):
-    fourcc, width, height, fps = mode
-    fps_text = f"{fps:g}"
-    lavf = f"video_size={width}x{height},framerate={fps_text},input_format={LAVF_FORMAT[fourcc]},fflags=+nobuffer"
+def mpv_cmd(dev, mode, cfg, known=None, menu_state=None, backend=None, mpv="mpv"):
+    backend = backend or BACKEND
     cmd = [
-        "mpv", f"av://v4l2:{dev}",
+        mpv, card_url(dev, backend),
         "--no-config",                 # predictable: no user scripts or settings in the way
         "--profile=low-latency",
         "--untimed", "--cache=no",
-        f"--demuxer-lavf-o={lavf}",
+        f"--demuxer-lavf-o={lavf_options(mode, backend)}",
         "--demuxer-lavf-analyzeduration=0.1",
-        "--no-audio",                  # sound goes through the PipeWire loopback (lower latency)
+        "--no-audio",                  # sound is played separately (lower latency)
         "--hwdec=no",
         "--interpolation=no",
-        "--title=Xbox", f"--wayland-app-id={APP}",
+        "--title=Xbox",
+    ] + ([] if backend == "dshow" else [f"--wayland-app-id={APP}"]) + [
         "--osc=no", "--osd-level=1", "--cursor-autohide=1000",
         "--keep-open=no", "--idle=no",
         "--stop-screensaver=yes",
         "--msg-level=all=warn",
-    ] + no_wait_options(mpv_options() if known is None else known)
+    ] + no_wait_options(mpv_options(mpv) if known is None else known)
     if cfg["fullscreen"]:
         cmd.append("--fs")
     if menu_state:
-        cmd += [f"--script={menu_script()}", f"--script-opts=xbox-state={menu_state}"]
+        cmd += [f"--script={menu_script()}", f"--script-opts=xbox-state={lua_path(menu_state)}"]
     return cmd + list(cfg["mpv_args"])
 
 
 # ----------------------------------------------------------------------------- single instance
+
+def windows_image_of(pid):
+    """Program path of a running process on Windows, or None."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        k32.OpenProcess.restype = wintypes.HANDLE
+        handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if not k32.QueryFullProcessImageNameW(wintypes.HANDLE(handle), 0, buf, ctypes.byref(size)):
+                return None
+            code = wintypes.DWORD()
+            if k32.GetExitCodeProcess(wintypes.HANDLE(handle), ctypes.byref(code)) and code.value != 259:
+                return None  # exited (259 = STILL_ACTIVE)
+            return buf.value
+        finally:
+            k32.CloseHandle(wintypes.HANDLE(handle))
+    except (OSError, AttributeError):
+        return None
+
 
 def running_pid():
     try:
@@ -385,6 +660,9 @@ def running_pid():
             pid = int(f.read().strip())
     except (OSError, ValueError):
         return None
+    if WINDOWS:
+        image = os.path.basename(windows_image_of(pid) or "").lower()
+        return pid if ("xbox" in image or "python" in image) else None
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             if APP.encode() not in f.read():
@@ -420,11 +698,82 @@ def stop(proc, timeout=3):
 
 
 def missing_tools(cfg):
+    if WINDOWS:
+        return [t for t in ("mpv", "ffmpeg") if not tool(t)]
     need = ["mpv", "v4l2-ctl"] + (["pw-loopback", "pw-dump"] if cfg["audio"] else [])
     return [t for t in need if not shutil.which(t)]
 
 
+def failed_to_open(err):
+    detail = (err or "").strip().splitlines()[-1:] or [""]
+    if re.search(r"busy|already in use|could not run graph", " ".join((err or "").splitlines()[-5:]), re.I):
+        notify("Karta jest zajęta przez inny program (np. OBS). Zamknij go i spróbuj ponownie.")
+    else:
+        notify(f"Nie udało się otworzyć obrazu z karty. {detail[0]}")
+
+
+def run_windows(cfg):
+    missing = missing_tools(cfg)
+    if missing:
+        notify("Brakuje plików " + ", ".join(t + ".exe" for t in missing) +
+               ". Rozpakuj całe archiwum Xbox (z folderami mpv i ffmpeg) i uruchom Xbox.exe z niego.")
+        return 1
+    mpv = tool("mpv")
+    children_die_with_me()
+    all_devices = dshow_devices(tool("ffmpeg"))
+    videos = [{"dev": d["name"], "name": d["name"], "usb": None} for d in all_devices if d["video"]]
+    device, modes = find_capture(cfg, devices=videos)
+    if not device:
+        notify("Nie widzę karty przechwytującej. Podłącz ją do portu USB 3 (nie przez hub).")
+        return 1
+    mode = choose_mode(modes, cfg["width"], cfg["height"], cfg["fps"], cfg["format"])
+    if not mode:
+        notify(f"Karta {device['name']} nie ma obsługiwanego trybu obrazu.")
+        return 1
+    log(f"{device['name']}: {mode[0]} {mode[1]}x{mode[2]} @ {mode[3]:g} fps")
+
+    audio = None
+    if cfg["audio"]:
+        source = cfg["audio_source"] or dshow_audio_for(device["name"], all_devices)
+        if source:
+            log(f"sound: {source}")
+            audio = subprocess.Popen(dshow_audio_cmd(source, cfg, mpv), stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, **NO_WINDOW)
+        else:
+            log("the card's sound input was not found: sound is off")
+
+    try:
+        ensure_config()
+        menu_state = write_menu_state(device["dev"], modes, mode, cfg)
+    except OSError as err:
+        log(f"settings menu unavailable: {err}")
+        menu_state = None
+
+    started = time.monotonic()
+    with KeepAwake():
+        video = subprocess.Popen(mpv_cmd(device["dev"], mode, cfg, menu_state=menu_state, mpv=mpv),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                 encoding="utf-8", errors="replace", **NO_WINDOW)
+        try:
+            _, err = video.communicate()
+        except KeyboardInterrupt:
+            stop(video)
+            err = ""
+    stop(audio)
+    if menu_state:
+        try:
+            os.remove(menu_state)
+        except OSError:
+            pass
+    if video.returncode not in (0, None, 4) and time.monotonic() - started < 5:
+        failed_to_open(err)
+        return 1
+    return 0
+
+
 def run(cfg):
+    if WINDOWS:
+        return run_windows(cfg)
     missing = missing_tools(cfg)
     if "mpv" in missing or "v4l2-ctl" in missing:
         notify(f"Brakuje programów: {', '.join(missing)}. Zainstaluj: sudo pacman -S mpv v4l-utils")
@@ -472,9 +821,9 @@ def run(cfg):
     def on_signal(*_):
         stop(video)
 
-    signal.signal(signal.SIGTERM, on_signal)
-    signal.signal(signal.SIGINT, on_signal)
-    signal.signal(signal.SIGHUP, on_signal)
+    for sig in (signal.SIGTERM, signal.SIGINT, getattr(signal, "SIGHUP", None)):
+        if sig is not None:
+            signal.signal(sig, on_signal)
 
     _, err = video.communicate()
     stop(audio)
@@ -486,16 +835,39 @@ def run(cfg):
             pass
     code = video.returncode
     if code not in (0, None, -signal.SIGTERM, 4) and time.monotonic() - started < 5:
-        detail = (err or "").strip().splitlines()[-1:] or [""]
-        if re.search(r"busy", detail[0], re.I):
-            notify("Karta jest zajęta przez inny program (np. OBS). Zamknij go i spróbuj ponownie.")
-        else:
-            notify(f"Nie udało się otworzyć obrazu z karty. {detail[0]}")
+        failed_to_open(err)
         return 1
     return 0
 
 
+def cmd_list_windows(cfg):
+    ffmpeg = tool("ffmpeg")
+    if not ffmpeg:
+        print("ffmpeg.exe not found next to Xbox.exe.")
+        return 1
+    all_devices = dshow_devices(ffmpeg)
+    videos = [{"dev": d["name"], "name": d["name"], "usb": None} for d in all_devices if d["video"]]
+    if not videos:
+        print("No video devices.")
+        return 1
+    chosen, _ = find_capture(cfg, devices=videos)
+    for d in videos:
+        modes = dshow_modes(d["name"], ffmpeg)
+        mark = "  <- Xbox" if chosen and chosen["dev"] == d["dev"] else ""
+        print(f'"{d["name"]}"{mark}')
+        best = choose_mode(modes, cfg["width"], cfg["height"], cfg["fps"], cfg["format"])
+        for m in sorted(set(modes), key=lambda m: (-m[1] * m[2], -m[3], m[0])):
+            if (m[1], m[2]) in ((1920, 1080), (1280, 720), (2560, 1440), (3840, 2160)):
+                print(f"    {m[0]} {m[1]}x{m[2]} @ {m[3]:g} fps{'   (used)' if m == best else ''}")
+    print("audio inputs: " + (", ".join(f'"{d["name"]}"' for d in all_devices if d["audio"]) or "none"))
+    if chosen:
+        print(f"sound: {cfg['audio_source'] or dshow_audio_for(chosen['name'], all_devices) or 'not found'}")
+    return 0
+
+
 def cmd_list(cfg):
+    if WINDOWS:
+        return cmd_list_windows(cfg)
     devices = video_devices()
     if not devices:
         print("No video devices.")
@@ -524,7 +896,7 @@ def main(argv=None):
     parser.add_argument("--toggle", action="store_true", help="close Xbox if it is open, otherwise open it")
     parser.add_argument("--fullscreen", action="store_true", help="start in fullscreen")
     parser.add_argument("--windowed", action="store_true", help="start in a window")
-    parser.add_argument("--device", help="capture device, e.g. /dev/video0")
+    parser.add_argument("--device", help="capture device, e.g. /dev/video0 (Windows: its name)")
     parser.add_argument("--format", help="picture format: MJPG or YUYV (default: automatic)")
     parser.add_argument("--no-audio", action="store_true", help="no sound")
     parser.add_argument("--list", action="store_true", help="show capture devices and modes")

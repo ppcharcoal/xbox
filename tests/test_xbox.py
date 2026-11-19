@@ -119,6 +119,7 @@ class ModeTests(unittest.TestCase):
         self.assertIsNone(x.choose_mode([]))
 
 
+@unittest.skipIf(os.name == "nt", "uses /sys")
 class DeviceTests(unittest.TestCase):
     def setUp(self):
         self.sys, self.card_usb = fake_sysfs()
@@ -198,13 +199,15 @@ class CommandTests(unittest.TestCase):
     def test_menu_modes_and_state(self):
         modes = x.parse_formats(MS2130)
         mm = x.menu_modes(modes)
-        self.assertEqual(mm[0], ["YUYV", 1920, 1080, 30.0, "yuyv422"])   # uncompressed first
+        self.assertEqual(mm[0], ["YUYV", 1920, 1080, 30.0,               # uncompressed first
+                                 "video_size=1920x1080,framerate=30,input_format=yuyv422,fflags=+nobuffer"])
         self.assertEqual(len(mm), 6)
         path = x.write_menu_state("/dev/video0", modes, ("YUYV", 1920, 1080, 30.0),
                                   x.merge_config({"format": "YUYV"}), os.path.join(tempfile.mkdtemp(), "s.json"))
         st = json.load(open(path))
         self.assertEqual(st["url"], "av://v4l2:/dev/video0")
-        self.assertEqual(st["best"], ["MJPG", 1920, 1080, 60.0, "mjpeg"])
+        self.assertEqual(st["best"][:4], ["MJPG", 1920, 1080, 60.0])
+        self.assertIn("input_format=mjpeg", st["best"][4])
         self.assertFalse(st["auto"])
         self.assertIn("--script-opts=xbox-state=/s.json",
                       x.mpv_cmd("/dev/video0", ("YUYV", 1920, 1080, 30.0), x.merge_config({}), known=set(), menu_state="/s.json"))
@@ -224,6 +227,98 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(c["width"], 1920)
 
 
+# What ffmpeg on Windows prints for the same MS2130 card, a webcam and two sound inputs.
+DSHOW_DEVICES = textwrap.dedent("""\
+    [dshow @ 000001c8] "USB3 Video" (video)
+    [dshow @ 000001c8]   Alternative name "@device_pnp_\\\\?\\usb#vid_345f&pid_2130&mi_00#7&1b4f&0&0000#{65e8773d}\\global"
+    [dshow @ 000001c8] "HD Webcam" (video)
+    [dshow @ 000001c8]   Alternative name "@device_pnp_\\\\?\\usb#vid_0c45&pid_6366"
+    [dshow @ 000001c8] "Mikrofon (Realtek(R) Audio)" (audio)
+    [dshow @ 000001c8]   Alternative name "@device_cm_{33D9A762}\\wave_{1}"
+    [dshow @ 000001c8] "Digital Audio Interface (2- USB3 Video)" (audio)
+    [dshow @ 000001c8]   Alternative name "@device_cm_{33D9A762}\\wave_{2}"
+    dummy: Immediate exit requested
+    """)
+
+DSHOW_DEVICES_OLD = textwrap.dedent("""\
+    [dshow @ 02c0] DirectShow video devices (some may be both video and audio devices)
+    [dshow @ 02c0]  "USB3 Video"
+    [dshow @ 02c0]     Alternative name "@device_pnp_x"
+    [dshow @ 02c0] DirectShow audio devices
+    [dshow @ 02c0]  "Digital Audio Interface (USB3 Video)"
+    [dshow @ 02c0]     Alternative name "@device_cm_y"
+    """)
+
+DSHOW_OPTIONS = textwrap.dedent("""\
+    [dshow @ 0000020] DirectShow video device options (from video devices)
+    [dshow @ 0000020]  Pin "Capture" (alternative pin name "0")
+    [dshow @ 0000020]   vcodec=mjpeg  min s=1920x1080 fps=10 max s=1920x1080 fps=60
+    [dshow @ 0000020]   vcodec=mjpeg  min s=1920x1080 fps=10 max s=1920x1080 fps=60 (tv, bt470bg/bt709/unknown, topleft)
+    [dshow @ 0000020]   vcodec=mjpeg  min s=1280x720 fps=10 max s=1280x720 fps=60
+    [dshow @ 0000020]   vcodec=h264  min s=1920x1080 fps=10 max s=1920x1080 fps=60
+    [dshow @ 0000020]   pixel_format=yuyv422  min s=1920x1080 fps=5 max s=1920x1080 fps=30
+    [dshow @ 0000020]   pixel_format=yuyv422  min s=1280x720 fps=10 max s=1280x720 fps=60.0002
+    video=USB3 Video: Immediate exit requested
+    """)
+
+
+class WindowsTests(unittest.TestCase):
+    """The DirectShow (Windows) side, from ffmpeg's text output."""
+
+    def test_devices(self):
+        devs = x.parse_dshow_devices(DSHOW_DEVICES)
+        self.assertEqual([d["name"] for d in devs if d["video"]], ["USB3 Video", "HD Webcam"])
+        self.assertIn("vid_345f", devs[0]["alt"])
+        self.assertEqual(x.dshow_audio_for("USB3 Video", devs), "Digital Audio Interface (2- USB3 Video)")
+        old = x.parse_dshow_devices(DSHOW_DEVICES_OLD)
+        self.assertEqual([(d["name"], d["video"], d["audio"]) for d in old],
+                         [("USB3 Video", True, False), ("Digital Audio Interface (USB3 Video)", False, True)])
+
+    def test_no_card_sound_is_not_the_microphone(self):
+        devs = [{"name": "Mikrofon (Realtek(R) Audio)", "audio": True, "video": False}]
+        self.assertIsNone(x.dshow_audio_for("USB3 Video", devs))
+
+    def test_modes(self):
+        modes = x.parse_dshow_options(DSHOW_OPTIONS)
+        self.assertEqual(sorted(set(modes)), sorted([
+            ("MJPG", 1920, 1080, 60.0), ("MJPG", 1920, 1080, 30.0), ("MJPG", 1280, 720, 60.0),
+            ("MJPG", 1280, 720, 30.0), ("YUYV", 1920, 1080, 30.0), ("YUYV", 1280, 720, 60.0),
+            ("YUYV", 1280, 720, 30.0)]))
+        self.assertEqual(len(modes), len(set(modes)))
+        self.assertEqual(x.choose_mode(modes), ("MJPG", 1920, 1080, 60.0))
+        self.assertEqual(x.choose_mode(modes, fmt="YUYV"), ("YUYV", 1920, 1080, 30.0))
+
+    def test_finds_the_card_not_the_webcam(self):
+        videos = [{"dev": n, "name": n, "usb": None} for n in ("HD Webcam", "USB3 Video")]
+        dev, _ = x.find_capture(x.merge_config({}), devices=videos,
+                                modes_of=lambda n: x.parse_dshow_options(DSHOW_OPTIONS))
+        self.assertEqual(dev["dev"], "USB3 Video")
+
+    def test_mpv(self):
+        cmd = x.mpv_cmd("USB3 Video", ("YUYV", 1920, 1080, 30.0), x.merge_config({}), known=set(),
+                        backend="dshow", mpv=r"C:\Xbox\mpv\mpv.exe")
+        self.assertEqual(cmd[:2], [r"C:\Xbox\mpv\mpv.exe", "av://dshow:video=USB3 Video"])
+        self.assertIn("--demuxer-lavf-o=video_size=1920x1080,framerate=30,pixel_format=yuyv422,fflags=+nobuffer", cmd)
+        self.assertFalse(any(c.startswith("--wayland") for c in cmd))
+        self.assertIn("vcodec=mjpeg", x.lavf_options(("MJPG", 1920, 1080, 60.0), "dshow"))
+
+    def test_menu_state(self):
+        modes = x.parse_dshow_options(DSHOW_OPTIONS)
+        path = x.write_menu_state("USB3 Video", modes, ("MJPG", 1920, 1080, 60.0), x.merge_config({}),
+                                  os.path.join(tempfile.mkdtemp(), "s.json"), backend="dshow")
+        st = json.load(open(path))
+        self.assertEqual(st["url"], "av://dshow:video=USB3 Video")
+        self.assertEqual(st["modes"][0][4], "video_size=1920x1080,framerate=30,pixel_format=yuyv422,fflags=+nobuffer")
+        self.assertTrue(st["auto"])
+
+    def test_sound(self):
+        cmd = x.dshow_audio_cmd("Digital Audio Interface (USB3 Video)", x.merge_config({}), "mpv.exe")
+        self.assertEqual(cmd[:2], ["mpv.exe", "av://dshow:audio=Digital Audio Interface (USB3 Video)"])
+        for opt in ("--no-video", "--force-window=no", "--audio-buffer=0.025"):
+            self.assertIn(opt, cmd)
+
+
+@unittest.skipIf(os.name == "nt", "uses /sys and shell scripts")
 class RunTests(unittest.TestCase):
     """run() with fake mpv / v4l2-ctl / pw-dump / pw-loopback on PATH."""
 

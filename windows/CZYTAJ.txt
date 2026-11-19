@@ -1,0 +1,37 @@
+﻿Xbox dla Windows: obraz z Xboxa na ekranie komputera z karty przechwytującej HDMI (USB)
+================================================================================
+
+URUCHOMIENIE
+1. Rozpakuj CAŁE archiwum (np. do C:\Xbox). Xbox.exe potrzebuje folderów mpv i ffmpeg obok siebie.
+2. Podłącz kartę bezpośrednio do portu USB 3 w komputerze (nie przez hub).
+3. Uruchom Xbox.exe. Obraz otwiera się na pełnym ekranie, z dźwiękiem z karty.
+   Skrót na pulpicie: prawy klik na Xbox.exe -> Wyślij do -> Pulpit (utwórz skrót).
+
+Windows może za pierwszym razem pokazać „System Windows ochronił ten komputer”
+(program nie jest podpisany): kliknij „Więcej informacji” -> „Uruchom mimo to”.
+
+W OKNIE
+  Ctrl+Shift+M   menu ustawień obrazu (format, rozdzielczość, klatki, pełny ekran)
+  Ctrl+F albo f  pełny ekran
+  Esc            wyjście z pełnego ekranu / zamknięcie menu
+  q              zamknij
+
+Wygaszacz, blokada i uśpienie ekranu nie włączają się, dopóki Xbox jest otwarty.
+
+NA XBOXIE
+  Ustawienia -> Ogólne -> Opcje TV i wyświetlania: rozdzielczość 1080p, odświeżanie 60 Hz.
+  Czarny obraz bywa w aplikacjach filmowych (HDCP); w grach i w menu obraz jest.
+
+GDY COŚ NIE DZIAŁA
+  - Lista-kart.bat pokazuje wykryte karty, ich tryby i wejście dźwięku.
+  - „Karta jest zajęta”: zamknij OBS, Discorda, Teamsa lub inny program, który jej używa.
+  - Brak dźwięku: w Lista-kart.bat jest lista wejść dźwięku; nazwę właściwego wpisz
+    w ustawieniach jako "audio_source".
+  - Ustawienia: %APPDATA%\Xbox\config.json (otwórz w Notatniku).
+  - Dziennik błędów: %LOCALAPPDATA%\Xbox\xbox.log
+
+Program wiersza poleceń: xbox-cli.exe --help (np. --windowed, --format YUYV, --list).
+
+W zestawie: mpv (https://mpv.io, GPL) i FFmpeg (https://ffmpeg.org, LGPL) w folderach mpv i ffmpeg.
+Projekt niezwiązany z Microsoftem; „Xbox” to znak towarowy Microsoftu.
+Źródła: https://github.com/ppcharcoal/xbox

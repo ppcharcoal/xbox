@@ -1,0 +1,99 @@
+name: Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
+      - run: python3 -m unittest discover -s tests -v
+
+  windows:
+    needs: test-linux
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download mpv and FFmpeg
+        run: |
+          New-Item -ItemType Directory -Force dl, pkg/Xbox/mpv, pkg/Xbox/ffmpeg | Out-Null
+          gh release download -R zhongfly/mpv-winbuild -p "mpv-x86_64-2*.7z" -D dl
+          if (-not (Get-ChildItem dl/mpv-*.7z -ErrorAction SilentlyContinue)) {
+            gh release download -R shinchiro/mpv-winbuild-cmake -p "mpv-x86_64-2*.7z" -D dl
+          }
+          $mpv = Get-ChildItem dl/mpv-*.7z | Select-Object -First 1
+          if (-not $mpv) { throw "no mpv build found" }
+          Write-Host "mpv: $($mpv.Name)"
+          7z x $mpv.FullName -opkg/Xbox/mpv -y | Out-Null
+          gh release download latest -R BtbN/FFmpeg-Builds -p "ffmpeg-master-latest-win64-lgpl-shared.zip" -D dl
+          7z x dl/ffmpeg-master-latest-win64-lgpl-shared.zip -odl/ff -y | Out-Null
+          Copy-Item dl/ff/*/bin/ffmpeg.exe, dl/ff/*/bin/*.dll pkg/Xbox/ffmpeg/
+          Copy-Item dl/ff/*/LICENSE.txt pkg/Xbox/ffmpeg/LICENSE.txt -ErrorAction SilentlyContinue
+          Get-ChildItem -Recurse pkg/Xbox | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: DirectShow works in FFmpeg and mpv
+        run: |
+          $out = & pkg/Xbox/ffmpeg/ffmpeg.exe -hide_banner -list_devices true -f dshow -i dummy 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match "Unknown input format") { throw "ffmpeg has no dshow" }
+          & pkg/Xbox/mpv/mpv.exe --no-config "av://dshow:video=xbox-test-no-such-card" --vo=null --ao=null --frames=1 --log-file=mpv.log
+          Start-Sleep 3
+          $log = Get-Content mpv.log -Raw
+          Write-Host ($log -split "`n" | Select-String -Pattern "dshow|lavf|Failed|error" | Out-String)
+          if ($log -notmatch "dshow") { throw "mpv has no dshow" }
+          if ($log -match "Unknown lavf format") { throw "mpv has no dshow" }
+          & pkg/Xbox/mpv/mpv.exe --list-options | Select-String -Pattern "swapchain-depth|d3d11-flip" | Out-String | Write-Host
+
+      - name: Tests (DirectShow parsing, settings menu in the real mpv)
+        working-directory: tests
+        run: |
+          $env:PATH = "$PWD/../pkg/Xbox/mpv;$env:PATH"
+          python -m unittest -v test_xbox.WindowsTests test_xbox.ModeTests test_menu
+
+      - name: Build Xbox.exe
+        run: |
+          python -m pip install --upgrade pyinstaller
+          Copy-Item xbox xbox.py
+          pyinstaller --onefile --noconsole --name Xbox --icon xbox.ico xbox.py
+          pyinstaller --onefile --console --name xbox-cli --icon xbox.ico xbox.py
+          Copy-Item dist/Xbox.exe, dist/xbox-cli.exe, menu.lua, LICENSE pkg/Xbox/
+          Copy-Item windows/*.txt, windows/*.bat pkg/Xbox/
+          & pkg/Xbox/xbox-cli.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "xbox-cli --version failed" }
+          & pkg/Xbox/xbox-cli.exe --list
+          Write-Host "exit: $LASTEXITCODE"
+          & pkg/Xbox/xbox-cli.exe --config
+          Compress-Archive -Path pkg/Xbox -DestinationPath Xbox-Windows.zip -CompressionLevel Optimal
+          Get-Item Xbox-Windows.zip | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xbox-Windows
+          path: Xbox-Windows.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag Xbox-Windows.zip --clobber
+          } else {
+            gh release create $tag Xbox-Windows.zip --title "Xbox $tag" --notes-file windows/RELEASE.md
+          }

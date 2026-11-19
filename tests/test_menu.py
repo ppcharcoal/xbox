@@ -30,17 +30,26 @@ class MenuInMpvTest(unittest.TestCase):
         cmd = x.mpv_cmd("/dev/video0", x.choose_mode(modes), cfg, known=set(), menu_state=state)
         cmd[1] = st["url"]
         cmd = [c for c in cmd if not c.startswith("--demuxer-lavf-o=")]
-        sock_path = os.path.join(cls.dir, "sock")
+        windows = os.name == "nt"
+        sock_path = rf"\\.\pipe\xbox-test-{os.getpid()}" if windows else os.path.join(cls.dir, "sock")
         cls.mpv = subprocess.Popen(cmd + ["--vo=null", "--ao=null", f"--input-ipc-server={sock_path}"],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cls.sock = None
         for _ in range(100):
-            if os.path.exists(sock_path):
+            try:
+                if windows:  # mpv's IPC is a named pipe there
+                    cls.io = open(sock_path, "r+b", buffering=0)
+                else:
+                    cls.sock = socket.socket(socket.AF_UNIX)
+                    cls.sock.connect(sock_path)
+                    cls.io = cls.sock.makefile("rwb", buffering=0)
                 break
-            time.sleep(0.05)
+            except OSError:
+                if cls.sock:
+                    cls.sock.close()
+                    cls.sock = None
+                time.sleep(0.1)
         time.sleep(0.5)
-        cls.sock = socket.socket(socket.AF_UNIX)
-        cls.sock.connect(sock_path)
-        cls.io = cls.sock.makefile("rw")
         cls.rid = 0
 
     @classmethod
@@ -53,15 +62,19 @@ class MenuInMpvTest(unittest.TestCase):
             cls.mpv.wait(timeout=5)
         except subprocess.TimeoutExpired:
             cls.mpv.kill()
+        for f in (cls.io, cls.sock):
+            try:
+                f and f.close()
+            except OSError:
+                pass
         x.CONFIG_PATH = cls.old_config
 
     @classmethod
     def call(cls, *command):
         cls.rid += 1
-        cls.io.write(json.dumps({"command": list(command), "request_id": cls.rid}) + "\n")
-        cls.io.flush()
+        cls.io.write((json.dumps({"command": list(command), "request_id": cls.rid}) + "\n").encode())
         while True:
-            reply = json.loads(cls.io.readline())
+            reply = json.loads(cls.io.readline().decode("utf-8"))
             if reply.get("request_id") == cls.rid:
                 return reply.get("data")
 
@@ -97,8 +110,8 @@ class MenuInMpvTest(unittest.TestCase):
         self.key("ENTER", 1.0)
         self.assertFalse(self.menu()["open"])
         lavf = self.call("get_property", "demuxer-lavf-o")
-        self.assertEqual(lavf, {"video_size": "1280x720", "framerate": "60", "input_format": "yuyv422",
-                                "fflags": "+nobuffer"})
+        expected = dict(kv.split("=", 1) for kv in x.lavf_options(("YUYV", 1280, 720, 60.0)).split(","))
+        self.assertEqual(lavf, expected)
         cfg = x.merge_config(self.config())
         self.assertEqual((cfg["format"], cfg["width"], cfg["height"], cfg["fps"]), ("YUYV", 1280, 720, 60))
 

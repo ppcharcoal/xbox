@@ -52,10 +52,8 @@ end
 local function apply_mode(m, auto)
     local s = load_state()
     if not s then return end
-    local fps = tostring(m[4]):gsub("%.0+$", "")
-    local lavf = string.format("video_size=%dx%d,framerate=%s,input_format=%s,fflags=+nobuffer",
-        m[2], m[3], fps, m[5])
-    mp.set_property("demuxer-lavf-o", lavf)
+    -- m[5]: the FFmpeg options opening the card in this mode (v4l2 or dshow)
+    mp.set_property("demuxer-lavf-o", m[5])
     mp.commandv("loadfile", s.url, "replace")
     s.current = m
     s.auto = auto
