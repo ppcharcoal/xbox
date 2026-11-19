@@ -11,14 +11,15 @@ permissions:
 jobs:
   test-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mpv
       - run: python3 -m unittest discover -s tests -v
 
   windows:
     needs: test-linux
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
