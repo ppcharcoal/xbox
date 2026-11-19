@@ -65,7 +65,7 @@ jobs:
         working-directory: tests
         run: |
           $env:PATH = "$PWD/../pkg/Xbox/mpv;$env:PATH"
-          python -m unittest -v test_xbox.WindowsTests test_xbox.ModeTests test_menu
+          python -m unittest -v test_xbox.WindowsTests test_xbox.WindowsApiTests test_xbox.ModeTests test_menu
 
       - name: Build Xbox.exe
         run: |

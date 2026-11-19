@@ -22,7 +22,7 @@ import tempfile
 import time
 
 APP = "xbox"
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 WINDOWS = sys.platform == "win32"
 BACKEND = "dshow" if WINDOWS else "v4l2"
 
@@ -90,7 +90,7 @@ def notify(text):
         try:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, text, "Xbox", 0x30 | 0x10000)  # warning, foreground
-        except (OSError, AttributeError):
+        except Exception:
             pass
     elif shutil.which("notify-send"):
         subprocess.Popen(["notify-send", "-a", "Xbox", "-i", APP, "Xbox", text],
@@ -451,8 +451,8 @@ class KeepAwake:
     def _set(flags):
         try:
             import ctypes
-            ctypes.windll.kernel32.SetThreadExecutionState(flags)
-        except (OSError, AttributeError):
+            ctypes.windll.kernel32.SetThreadExecutionState(ctypes.c_uint(flags))
+        except Exception:
             pass
 
 
@@ -480,16 +480,26 @@ def children_die_with_me():
                         ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # exact C types: GetCurrentProcess() is the pseudo-handle -1, which does not fit
+        # ctypes' default int argument on 64-bit Windows
         k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        k32.SetInformationJobObject.restype = wintypes.BOOL
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
         k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.GetCurrentProcess.argtypes = []
+        k32.AssignProcessToJobObject.restype = wintypes.BOOL
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         job = k32.CreateJobObjectW(None, None)
         info = Extended()
         info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if job and k32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info)) \
-                and k32.AssignProcessToJobObject(wintypes.HANDLE(job), k32.GetCurrentProcess()):
+        if job and k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)) \
+                and k32.AssignProcessToJobObject(job, k32.GetCurrentProcess()):
             _JOB = job  # the handle stays open for as long as Xbox runs
-    except (OSError, AttributeError, ImportError):
-        pass
+        else:
+            log(f"job object unavailable (error {ctypes.get_last_error()})")
+    except Exception as err:  # never stop Xbox over this extra
+        log(f"job object unavailable: {err!r}")
 
 
 def lua_path(path):
@@ -502,7 +512,7 @@ def lua_path(path):
         buf = ctypes.create_unicode_buffer(1024)
         if ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024) and buf.value.isascii():
             return buf.value
-    except (OSError, AttributeError):
+    except Exception:
         pass
     return path
 
@@ -634,8 +644,9 @@ def windows_image_of(pid):
     try:
         import ctypes
         from ctypes import wintypes
-        k32 = ctypes.windll.kernel32
+        k32 = ctypes.WinDLL("kernel32")
         k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if not handle:
             return None
@@ -650,7 +661,7 @@ def windows_image_of(pid):
             return buf.value
         finally:
             k32.CloseHandle(wintypes.HANDLE(handle))
-    except (OSError, AttributeError):
+    except Exception:
         return None
 
 

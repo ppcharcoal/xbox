@@ -318,6 +318,40 @@ class WindowsTests(unittest.TestCase):
             self.assertIn(opt, cmd)
 
 
+@unittest.skipUnless(os.name == "nt", "Windows only")
+class WindowsApiTests(unittest.TestCase):
+    """The real Windows calls (job object, keep-awake, process lookup, short paths)."""
+
+    def test_job_object(self):
+        x.children_die_with_me()
+        self.assertIsNotNone(x._JOB)
+
+    def test_keep_awake(self):
+        with x.KeepAwake():
+            pass
+
+    def test_own_process_is_found(self):
+        self.assertTrue(x.windows_image_of(os.getpid()).lower().endswith(".exe"))
+        self.assertIsNone(x.windows_image_of(999999999 & 0xFFFFFFFC))
+
+    def test_pid_file(self):
+        old = x.PID_FILE
+        x.PID_FILE = os.path.join(tempfile.mkdtemp(), "xbox.pid")
+        try:
+            x.write_pid()
+            self.assertEqual(x.running_pid(), os.getpid())
+        finally:
+            x.PID_FILE = old
+
+    def test_lua_path(self):
+        d = os.path.join(tempfile.mkdtemp(), "Paweł Żółw")
+        os.makedirs(d)
+        p = os.path.join(d, "config.json")
+        open(p, "w").close()
+        short = x.lua_path(p)
+        self.assertTrue(os.path.exists(short))
+
+
 @unittest.skipIf(os.name == "nt", "uses /sys and shell scripts")
 class RunTests(unittest.TestCase):
     """run() with fake mpv / v4l2-ctl / pw-dump / pw-loopback on PATH."""
